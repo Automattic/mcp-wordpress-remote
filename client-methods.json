@@ -1,0 +1,324 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MCP Client Methods",
+    "description": "List of all client-to-server method calls in the Model Context Protocol",
+    "type": "object",
+    "properties": {
+        "methods": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the method"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of what the method does"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Parameters accepted by the method"
+                    }
+                }
+            }
+        }
+    },
+    "methods": [
+        {
+            "name": "initialize",
+            "description": "Sent from the client to the server when it first connects, asking it to begin initialization",
+            "params": {
+                "capabilities": {
+                    "type": "object",
+                    "description": "Capabilities that the client supports"
+                },
+                "clientInfo": {
+                    "type": "object",
+                    "description": "Information about the client implementation",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name of the client implementation"
+                        },
+                        "version": {
+                            "type": "string",
+                            "description": "Version of the client implementation"
+                        }
+                    }
+                },
+                "protocolVersion": {
+                    "type": "string",
+                    "description": "The latest version of the Model Context Protocol that the client supports"
+                }
+            }
+        },
+        {
+            "name": "ping",
+            "description": "A ping to check that the server is still alive",
+            "params": {
+                "_meta": {
+                    "type": "object",
+                    "properties": {
+                        "progressToken": {
+                            "type": [
+                                "string",
+                                "integer"
+                            ],
+                            "description": "Token for progress notifications"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "prompts/list",
+            "description": "Request a list of prompts and prompt templates from the server",
+            "params": {
+                "cursor": {
+                    "type": "string",
+                    "description": "An opaque token for pagination"
+                }
+            }
+        },
+        {
+            "name": "prompts/get",
+            "description": "Used by the client to get a prompt provided by the server",
+            "params": {
+                "name": {
+                    "type": "string",
+                    "description": "The name of the prompt or prompt template"
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "Arguments to use for templating the prompt",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        {
+            "name": "resources/templates/list",
+            "description": "Request a list of resource templates from the server",
+            "params": {
+                "cursor": {
+                    "type": "string",
+                    "description": "An opaque token for pagination"
+                }
+            }
+        },
+        {
+            "name": "resources/list",
+            "description": "Request a list of resources from the server",
+            "params": {
+                "cursor": {
+                    "type": "string",
+                    "description": "An opaque token for pagination"
+                }
+            }
+        },
+        {
+            "name": "resources/read",
+            "description": "Sent from the client to the server, to read a specific resource URI",
+            "params": {
+                "uri": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URI of the resource to read"
+                }
+            }
+        },
+        {
+            "name": "resources/subscribe",
+            "description": "Request resources/updated notifications from the server whenever a particular resource changes",
+            "params": {
+                "uri": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URI of the resource to subscribe to"
+                }
+            }
+        },
+        {
+            "name": "resources/unsubscribe",
+            "description": "Request cancellation of resources/updated notifications from the server",
+            "params": {
+                "uri": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URI of the resource to unsubscribe from"
+                }
+            }
+        },
+        {
+            "name": "roots/list",
+            "description": "Request a list of root URIs from the client",
+            "params": {
+                "_meta": {
+                    "type": "object",
+                    "properties": {
+                        "progressToken": {
+                            "type": [
+                                "string",
+                                "integer"
+                            ],
+                            "description": "Token for progress notifications"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "tools/call",
+            "description": "Request the server to execute a tool",
+            "params": {
+                "name": {
+                    "type": "string",
+                    "description": "The name of the tool to call"
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "The parameters to pass to the tool",
+                    "additionalProperties": true
+                }
+            }
+        },
+        {
+            "name": "tools/list",
+            "description": "Request a list of available tools from the server",
+            "params": {
+                "cursor": {
+                    "type": "string",
+                    "description": "An opaque token for pagination"
+                }
+            }
+        },
+        {
+            "name": "logging/setLevel",
+            "description": "A request from the client to the server, to enable or adjust logging",
+            "params": {
+                "level": {
+                    "type": "string",
+                    "enum": [
+                        "alert",
+                        "critical",
+                        "debug",
+                        "emergency",
+                        "error",
+                        "info",
+                        "notice",
+                        "warning"
+                    ],
+                    "description": "The level of logging that the client wants to receive from the server"
+                }
+            }
+        },
+        {
+            "name": "completion/complete",
+            "description": "A request from the client to the server, to ask for completion options",
+            "params": {
+                "argument": {
+                    "type": "object",
+                    "description": "The argument's information",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The name of the argument"
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The value of the argument to use for completion matching"
+                        }
+                    }
+                },
+                "ref": {
+                    "type": "object",
+                    "description": "Reference to a prompt or resource",
+                    "oneOf": [
+                        {
+                            "properties": {
+                                "type": {
+                                    "const": "ref/prompt"
+                                },
+                                "name": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        {
+                            "properties": {
+                                "type": {
+                                    "const": "ref/resource"
+                                },
+                                "uri": {
+                                    "type": "string",
+                                    "format": "uri-template"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "notifications/initialized",
+            "description": "Notification sent from the client to the server after initialization has finished",
+            "params": {
+                "_meta": {
+                    "type": "object",
+                    "description": "Additional metadata for the notification"
+                }
+            }
+        },
+        {
+            "name": "notifications/cancelled",
+            "description": "Notification sent by either side to indicate that it is cancelling a previously-issued request",
+            "params": {
+                "requestId": {
+                    "type": [
+                        "string",
+                        "integer"
+                    ],
+                    "description": "The ID of the request to cancel"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "An optional string describing the reason for the cancellation"
+                }
+            }
+        },
+        {
+            "name": "notifications/progress",
+            "description": "An out-of-band notification used to inform the receiver of a progress update for a long-running request",
+            "params": {
+                "progress": {
+                    "type": "number",
+                    "description": "The progress thus far"
+                },
+                "progressToken": {
+                    "type": [
+                        "string",
+                        "integer"
+                    ],
+                    "description": "The progress token which was given in the initial request"
+                },
+                "total": {
+                    "type": "number",
+                    "description": "Total number of items to process, if known"
+                }
+            }
+        },
+        {
+            "name": "notifications/roots/list_changed",
+            "description": "A notification from the client to the server, informing it that the list of roots has changed",
+            "params": {
+                "_meta": {
+                    "type": "object",
+                    "description": "Additional metadata for the notification"
+                }
+            }
+        }
+    ]
+}

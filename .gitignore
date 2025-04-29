@@ -1,0 +1,8 @@
+node_modules/
+dist/
+logs/
+.DS_Store
+.env
+*.log
+/mcp-config.json
+/mcp-proxy.log
