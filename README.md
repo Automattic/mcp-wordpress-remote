@@ -4,7 +4,7 @@ The mcp-wordpress-remote package acts as a bridge between local Model Context Pr
 
 ## WordPress MCP plugin
 
-You have to install the [wordpress-mcp](https://github.com/Automattic/wordpress-mcp) plugin on your WordPress website.
+You have to install the [wordpress-mcp](https://github.com/Automattic/wordpress-mcp) plugin on your WordPress website, and enable MCP Functionality on Settings > MCP Settings.
 
 ## Why
 
@@ -43,7 +43,7 @@ Example configuration:
   "mcpServers": {
     "wordpress-mcp": {
       "command": "npx",
-      "args": ["@Automattic/mcp-wordpress-remote"],
+      "args": ["@automattic/mcp-wordpress-remote"],
       "env": {
         "WP_API_URL": "https://your-wordpress-site.com",
         "WP_API_USERNAME": "your-username",
@@ -70,7 +70,7 @@ Example configuration:
   "mcpServers": {
     "wordpress-mcp": {
       "command": "npx",
-      "args": ["@Automattic/mcp-wordpress-remote"],
+      "args": ["@automattic/mcp-wordpress-remote"],
       "env": {
         "WP_API_URL": "https://your-wordpress-site.com",
         "WP_API_USERNAME": "your-username",
