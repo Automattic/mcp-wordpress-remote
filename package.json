@@ -1,6 +1,6 @@
 {
 	"name": "@automattic/mcp-wordpress-remote",
-	"version": "0.1.6",
+	"version": "0.1.7",
 	"description": "MCP WordPress Remote proxy server",
 	"keywords": [
 		"mcp",
@@ -35,6 +35,7 @@
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.8.0",
 		"express": "^4.18.2",
+		"node-fetch": "^3.3.2",
 		"open": "^10.0.0"
 	},
 	"devDependencies": {

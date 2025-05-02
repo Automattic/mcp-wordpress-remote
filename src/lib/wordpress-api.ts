@@ -1,7 +1,4 @@
-/**
- * External dependencies
- */
-import * as path from 'node:path';
+import fetch from 'node-fetch';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { log } from './utils.js';
 
