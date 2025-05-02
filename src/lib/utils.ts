@@ -1,9 +1,7 @@
-import { EventEmitter } from 'events';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createHash } from 'crypto';
 import { createServer } from 'http';
-import { log as consoleLog } from 'console';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
