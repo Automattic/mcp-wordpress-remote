@@ -22,7 +22,7 @@ The following environment variables are required:
 
 - `WP_API_URL`: The URL of your WordPress site (e.g., `https://example.com`)
 - `WP_API_USERNAME`: Your WordPress username
-- `WP_API_PASSWORD`: Your WordPress API password
+- `WP_API_PASSWORD`: Your WordPress [application password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/#Getting-Credentials)
 - `WOO_CUSTOMER_KEY`: Your Woocommerce customer key (optional, if you intend to use WooCommerce MCP assets)
 - `WOO_CUSTOMER_SECRET`: Your WooCommerce customer secret (optional, if you intend to use WooCommerce MCP assets)
 - `LOG_FILE`: Optional full path to a log file
@@ -43,11 +43,11 @@ Example configuration:
   "mcpServers": {
     "wordpress-mcp": {
       "command": "npx",
-      "args": ["@automattic/mcp-wordpress-remote"],
+      "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
         "WP_API_URL": "https://your-wordpress-site.com",
         "WP_API_USERNAME": "your-username",
-        "WP_API_PASSWORD": "your-password",
+        "WP_API_PASSWORD": "your-application-password",
         "WOO_CUSTOMER_KEY": "your-woo-customer-key",
         "WOO_CUSTOMER_SECRET": "your-woo-customer-secret",
         "LOG_FILE": "optional full path to the log file"
@@ -69,12 +69,12 @@ Example configuration:
 {
   "mcpServers": {
     "wordpress-mcp": {
-      "command": "npx",
-      "args": ["@automattic/mcp-wordpress-remote"],
+      "command": "npx -y",
+      "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
         "WP_API_URL": "https://your-wordpress-site.com",
         "WP_API_USERNAME": "your-username",
-        "WP_API_PASSWORD": "your-password",
+        "WP_API_PASSWORD": "your-application-password",
         "WOO_CUSTOMER_KEY": "your-woo-customer-key",
         "WOO_CUSTOMER_SECRET": "your-woo-customer-secret",
         "LOG_FILE": "optional full path to the log file"
