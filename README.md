@@ -20,12 +20,23 @@ You have to install the [wordpress-mcp](https://github.com/Automattic/wordpress-
 
 The following environment variables are required:
 
+#### Basic Authentication (Default)
+
 - `WP_API_URL`: The URL of your WordPress site (e.g., `https://example.com`)
 - `WP_API_USERNAME`: Your WordPress username
 - `WP_API_PASSWORD`: Your WordPress [application password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/#Getting-Credentials)
 - `WOO_CUSTOMER_KEY`: Your Woocommerce customer key (optional, if you intend to use WooCommerce MCP assets)
 - `WOO_CUSTOMER_SECRET`: Your WooCommerce customer secret (optional, if you intend to use WooCommerce MCP assets)
 - `LOG_FILE`: Optional full path to a log file
+
+#### OAuth Authentication
+
+To use OAuth authentication instead of basic auth, set the following environment variables:
+
+- `WP_OAUTH`: Set to "true" to enable OAuth authentication
+- `WP_API_URL`: The URL of your WordPress site (e.g., `https://example.com`)
+- `WP_OAUTH_CALLBACK_PORT`: The port for OAuth callback (default: 3333)
+- `WP_MCP_CONFIG_DIR`: Optional custom directory for OAuth configuration (default: ~/.wp-mcp-auth)
 
 ### Configuration in MCP Clients
 
@@ -36,7 +47,7 @@ In order to add an MCP server to Claude Desktop you need to edit the configurati
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-Example configuration:
+Example configuration with basic auth:
 
 ```json
 {
@@ -57,13 +68,30 @@ Example configuration:
 }
 ```
 
-https://woocommerce.com/document/woocommerce-rest-api/
+Example configuration with OAuth:
+
+```json
+{
+  "mcpServers": {
+    "wordpress-mcp": {
+      "command": "npx",
+      "args": ["-y", "@automattic/mcp-wordpress-remote"],
+      "env": {
+        "WP_API_URL": "https://your-wordpress-site.com",
+        "WP_OAUTH": "true",
+        "WP_OAUTH_CALLBACK_PORT": "3333",
+        "LOG_FILE": "optional full path to the log file"
+      }
+    }
+  }
+}
+```
 
 #### Cursor
 
 The configuration file is located at `~/.cursor/mcp.json`.
 
-Example configuration:
+Example configuration with basic auth:
 
 ```json
 {
@@ -83,6 +111,34 @@ Example configuration:
   }
 }
 ```
+
+Example configuration with OAuth:
+
+```json
+{
+  "mcpServers": {
+    "wordpress-mcp": {
+      "command": "npx -y",
+      "args": ["-y", "@automattic/mcp-wordpress-remote"],
+      "env": {
+        "WP_API_URL": "https://your-wordpress-site.com",
+        "WP_OAUTH": "true",
+        "WP_OAUTH_CALLBACK_PORT": "3333",
+        "LOG_FILE": "optional full path to the log file"
+      }
+    }
+  }
+}
+```
+
+## OAuth Authentication Flow
+
+When using OAuth authentication:
+
+1. The first time you connect, the proxy will open your default browser to authenticate with WordPress
+2. After successful authentication, the OAuth tokens are stored in the configuration directory
+3. Subsequent connections will use the stored tokens automatically
+4. If the tokens expire, the proxy will automatically refresh them
 
 ## @todo
 

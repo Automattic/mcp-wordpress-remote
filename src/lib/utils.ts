@@ -5,18 +5,19 @@ import { createServer } from 'http';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import express from 'express';
+import { EventEmitter } from 'events';
 
 // Version of the package
 export const MCP_WORDPRESS_REMOTE_VERSION = '1.0.0';
 
 // Logging configuration
-const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
-const LOG_FILE = process.env.LOG_FILE || path.join(LOG_DIR, 'mcp-proxy.log');
+const logFile = process.env.LOG_FILE || null;
 
-// Ensure log directory exists if logging to file is enabled
-if (process.env.LOG_FILE || process.env.LOG_DIR) {
-  const logDir = path.dirname(LOG_FILE);
-  if (!fs.existsSync(logDir)) {
+// Ensure the log directory exists if logging to the file is enabled
+if (logFile) {
+  const logDir = path.dirname(logFile);
+  if (!fs.existsSync(logFile)) {
     fs.mkdirSync(logDir, { recursive: true });
   }
 }
@@ -37,8 +38,8 @@ export function log(message: string, ...args: any[]): void {
   const logMessage = `${timestamp}: ${message}${formattedArgs ? ' ' + formattedArgs : ''}\n`;
 
   // Log to file only if LOG_FILE or LOG_DIR is provided
-  if (process.env.LOG_FILE || process.env.LOG_DIR) {
-    fs.appendFileSync(LOG_FILE, logMessage);
+  if (logFile) {
+    fs.appendFileSync(logFile, logMessage);
   }
 }
 
@@ -137,4 +138,64 @@ export function mcpProxy({ transportToClient, wpRequest }: ProxyConfig) {
       });
     }
   };
+}
+
+/**
+ * Sets up an Express server to handle the OAuth callback with long polling
+ * @param options Configuration options for the server
+ * @returns An object with the server, waitForAuthCode function, and authCompletedPromise
+ */
+export function setupOAuthCallbackServerWithLongPoll(options: {
+  port: number;
+  path: string;
+  events: EventEmitter;
+}) {
+  const app = express();
+  const server = app.listen(options.port);
+  let authCode: string | null = null;
+  let authCompleted = false;
+
+  app.get(options.path, (req, res) => {
+    const code = req.query.code as string;
+    if (code) {
+      authCode = code;
+      authCompleted = true;
+      options.events.emit('authCompleted', code);
+      res.send('Authentication completed. You can close this window.');
+    } else {
+      res.status(400).send('No code provided');
+    }
+  });
+
+  app.get('/wait-for-auth', (req, res) => {
+    if (authCompleted) {
+      res.status(200).send('Auth completed');
+    } else {
+      res.status(202).send('Auth in progress');
+    }
+  });
+
+  const waitForAuthCode = () => {
+    return new Promise<string>(resolve => {
+      if (authCode) {
+        resolve(authCode);
+      } else {
+        options.events.once('authCompleted', code => {
+          resolve(code);
+        });
+      }
+    });
+  };
+
+  const authCompletedPromise = new Promise<void>(resolve => {
+    if (authCompleted) {
+      resolve();
+    } else {
+      options.events.once('authCompleted', () => {
+        resolve();
+      });
+    }
+  });
+
+  return { server, waitForAuthCode, authCompletedPromise };
 }
