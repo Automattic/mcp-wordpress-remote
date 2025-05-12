@@ -25,15 +25,19 @@ function validateEnvironment() {
   }
 }
 
+function removeTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
 export async function wpRequest(
   params: WordPressRequestParams = { method: 'init' }
 ): Promise<WordPressResponse> {
   // Validate environment variables first
   validateEnvironment();
 
-  const endpoint = 'wp/v2/wpmcp';
+  const endpoint = '/wp/v2/wpmcp';
   const method = 'POST';
-  const baseUrl = process.env.WP_API_URL!;
+  const baseUrl = removeTrailingSlash(process.env.WP_API_URL!);
 
   // Log the request parameters for debugging
   log(`Request method: ${params.method || 'init'}`);
@@ -83,7 +87,7 @@ export async function wpRequest(
   log(`Auth header length: ${auth.length}`);
 
   // Build URL with query params for GET requests
-  const url = new URL(`/wp-json/${endpoint}`, baseUrl).toString();
+  const url = new URL(`/?rest_route=${endpoint}`, baseUrl).toString();
   log(`Requesting URL: ${url}`);
 
   const headers: Record<string, string> = {
