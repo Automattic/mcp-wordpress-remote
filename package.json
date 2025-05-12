@@ -27,7 +27,7 @@
 		"build": "tsup",
 		"build:watch": "tsup --watch",
 		"check": "prettier --check . && tsc",
-		"start": "node dist/proxy.js",
+		"start": "NODE_ENV=development tsup --watch",
 		"dev": "NODE_ENV=development node dist/proxy.js",
 		"test": "jest",
 		"test:watch": "jest --watch"
