@@ -36,6 +36,24 @@ type SetLevelRequest = z.infer<typeof SetLevelRequestSchema>;
 type CompleteRequest = z.infer<typeof CompleteRequestSchema>;
 type ListRootsRequest = z.infer<typeof ListRootsRequestSchema>;
 
+// Check Node.js version
+const requiredNodeVersion = 22;
+const currentNodeVersion = parseInt(process.version.slice(1).split('.')[0]);
+if (currentNodeVersion < requiredNodeVersion) {
+  log(`Error: This application requires Node.js version ${requiredNodeVersion} or higher.`);
+  log(`Current version: ${process.version}`);
+  process.exit(1);
+}
+
+// Check if fetch is available
+if (typeof globalThis.fetch !== 'function') {
+  log(
+    'Error: This application requires the fetch API, which is not available in your Node.js environment.'
+  );
+  log('Please ensure you are using Node.js 22 or later, or install node-fetch.');
+  process.exit(1);
+}
+
 async function WordPressProxy() {
   const init = (await wpRequest({ method: 'init' })) as InitializeResult;
 

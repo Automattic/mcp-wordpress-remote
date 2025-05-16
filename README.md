@@ -2,6 +2,10 @@
 
 The mcp-wordpress-remote package acts as a bridge between local Model Context Protocol (MCP) clients and remote WordPress MCP servers. By leveraging npx, you can execute this package without a global installation, simplifying the setup process.
 
+## Requirements
+
+- Node.js version 22 or higher
+
 ## WordPress MCP plugin
 
 You have to install the [wordpress-mcp](https://github.com/Automattic/wordpress-mcp) plugin on your WordPress website, and enable MCP Functionality on Settings > MCP Settings.
