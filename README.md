@@ -43,7 +43,7 @@ Example configuration:
   "mcpServers": {
     "wordpress-mcp": {
       "command": "npx",
-      "args": ["-y", "@automattic/mcp-wordpress-remote"],
+      "args": ["-y", "@automattic/mcp-wordpress-remote@latest"],
       "env": {
         "WP_API_URL": "https://your-wordpress-site.com",
         "WP_API_USERNAME": "your-username",
@@ -70,7 +70,7 @@ Example configuration:
   "mcpServers": {
     "wordpress-mcp": {
       "command": "npx",
-      "args": ["-y", "@automattic/mcp-wordpress-remote"],
+      "args": ["-y", "@automattic/mcp-wordpress-remote@latest"],
       "env": {
         "WP_API_URL": "https://your-wordpress-site.com",
         "WP_API_USERNAME": "your-username",
