@@ -1,5 +1,25 @@
 #!/usr/bin/env node
 
+// Check Node.js version
+const requiredNodeVersion = 22;
+const currentNodeVersion = parseInt(process.version.slice(1).split('.')[0]);
+if (currentNodeVersion < requiredNodeVersion) {
+  console.error(
+    `Error: This application requires Node.js version ${requiredNodeVersion} or higher.`
+  );
+  console.error(`Current version: ${process.version}`);
+  process.exit(1);
+}
+
+// Check if fetch is available
+if (typeof globalThis.fetch !== 'function') {
+  console.error(
+    'Error: This application requires the fetch API, which is not available in your Node.js environment.'
+  );
+  console.error('Please ensure you are using Node.js 22 or later, or install node-fetch.');
+  process.exit(1);
+}
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { InitializeResult } from './lib/schema/2024-11-05/schema.js';
