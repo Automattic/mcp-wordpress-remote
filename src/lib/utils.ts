@@ -7,14 +7,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 // Version of the package
-export const MCP_WORDPRESS_REMOTE_VERSION = '1.0.0';
+export const MCP_WORDPRESS_REMOTE_VERSION = '0.1.14';
 
 // Logging configuration
-const LOG_DIR = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
-const LOG_FILE = process.env.LOG_FILE || path.join(LOG_DIR, 'mcp-proxy.log');
+const LOG_FILE = process.env.LOG_FILE || null;
 
-// Ensure log directory exists if logging to file is enabled
-if (process.env.LOG_FILE || process.env.LOG_DIR) {
+// Ensure log diectory exists if logging to file is enabled
+if (LOG_FILE) {
   const logDir = path.dirname(LOG_FILE);
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
@@ -36,8 +35,8 @@ export function log(message: string, ...args: any[]): void {
 
   const logMessage = `${timestamp}: ${message}${formattedArgs ? ' ' + formattedArgs : ''}\n`;
 
-  // Log to file only if LOG_FILE or LOG_DIR is provided
-  if (process.env.LOG_FILE || process.env.LOG_DIR) {
+  // Log to file only if LOG_FILE is provided
+  if (LOG_FILE) {
     fs.appendFileSync(LOG_FILE, logMessage);
   }
 }
