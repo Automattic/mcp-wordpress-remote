@@ -88,6 +88,32 @@ Example configuration:
 }
 ```
 
+#### VS Code
+
+The configuration file can be created inside `.vscode/mcp.json` in your workspace/folder. 
+
+```json
+{
+    "servers": {
+        "wordpress-mcp": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@automattic/mcp-wordpress-remote@latest"],
+            "env": {
+              "WP_API_URL": "https://your-wordpress-site.com",
+              "WP_API_USERNAME": "your-username",
+              "WP_API_PASSWORD": "your-password",
+              "WOO_CUSTOMER_KEY": "your-woo-customer-key",
+              "WOO_CUSTOMER_SECRET": "your-woo-customer-secret",
+              "LOG_FILE": "optional full path to the log file"
+            }
+        }
+    }
+}
+```
+
+More information on VS Code and MCP is available in the [VS Code docs](https://code.visualstudio.com/docs/copilot/chat/mcp-servers)
+
 ## @todo
 
 As of now, this package is in its early development stages. Any suggestions, bugreports, PR's are welcome.
