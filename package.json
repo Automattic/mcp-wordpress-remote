@@ -1,78 +1,78 @@
 {
-	"name": "@automattic/mcp-wordpress-remote",
-	"version": "0.1.14",
-	"description": "MCP WordPress Remote proxy server",
-	"engines": {
-		"node": ">=22.0.0"
-	},
-	"keywords": [
-		"mcp",
-		"wordpress",
-		"remote",
-		"proxy"
-	],
-	"author": "Automattic Inc.",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/Automattic/mcp-wordpress-remote.git"
-	},
-	"type": "module",
-	"files": [
-		"dist",
-		"README.md",
-		"LICENSE"
-	],
-	"main": "dist/proxy.js",
-	"bin": {
-		"@automattic/mcp-wordpress-remote": "dist/proxy.js"
-	},
-	"scripts": {
-		"build": "tsup",
-		"build:watch": "tsup --watch",
-		"check": "prettier --check . && tsc",
-		"start": "NODE_ENV=development tsup --watch",
-		"dev": "NODE_ENV=development node dist/proxy.js",
-		"test": "jest",
-		"test:watch": "jest --watch"
-	},
-	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.8.0",
-		"express": "^4.18.2",
-		"open": "^10.0.0"
-	},
-	"devDependencies": {
-		"@types/express": "^4.17.21",
-		"@types/jest": "^29.5.12",
-		"@types/node": "^20.11.19",
-		"jest": "^29.7.0",
-		"prettier": "^3.2.5",
-		"ts-jest": "^29.1.2",
-		"tsup": "^8.0.2",
-		"typescript": "^5.3.3"
-	},
-	"tsup": {
-		"entry": [
-			"src/proxy.ts"
-		],
-		"format": [
-			"esm"
-		],
-		"dts": true,
-		"clean": true,
-		"outDir": "dist"
-	},
-	"jest": {
-		"preset": "ts-jest",
-		"testEnvironment": "node",
-		"testMatch": [
-			"**/__tests__/**/*.ts",
-			"**/?(*.)+(spec|test).ts"
-		],
-		"moduleFileExtensions": [
-			"ts",
-			"js",
-			"json",
-			"node"
-		]
-	}
+  "name": "@automattic/mcp-wordpress-remote",
+  "version": "0.1.18",
+  "description": "MCP WordPress Remote proxy server",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "wordpress",
+    "remote",
+    "proxy"
+  ],
+  "author": "Automattic Inc.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Automattic/mcp-wordpress-remote.git"
+  },
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "dist/proxy.js",
+  "bin": {
+    "@automattic/mcp-wordpress-remote": "dist/proxy.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "check": "prettier --check . && tsc",
+    "start": "NODE_ENV=development tsup --watch",
+    "dev": "NODE_ENV=development node dist/proxy.js",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.8.0",
+    "express": "^4.18.2",
+    "open": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.11.19",
+    "jest": "^29.7.0",
+    "prettier": "^3.2.5",
+    "ts-jest": "^29.1.2",
+    "tsup": "^8.0.2",
+    "typescript": "^5.3.3"
+  },
+  "tsup": {
+    "entry": [
+      "src/proxy.ts"
+    ],
+    "format": [
+      "esm"
+    ],
+    "dts": true,
+    "clean": true,
+    "outDir": "dist"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.ts",
+      "**/?(*.)+(spec|test).ts"
+    ],
+    "moduleFileExtensions": [
+      "ts",
+      "js",
+      "json",
+      "node"
+    ]
+  }
 }
