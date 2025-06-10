@@ -13,15 +13,30 @@ import { log } from './utils.js';
  */
 
 function validateEnvironment() {
-  const requiredEnvVars = ['WP_API_URL', 'WP_API_USERNAME', 'WP_API_PASSWORD'];
-  const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+  // Check if JWT token is available
+  if (process.env.JWT_TOKEN) {
+    const requiredEnvVars = ['WP_API_URL'];
+    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
 
-  if (missingVars.length > 0) {
-    throw new Error(
-      `Missing required environment variables: ${missingVars.join(
-        ', '
-      )}. Please set these variables before starting the server.`
-    );
+    if (missingVars.length > 0) {
+      throw new Error(
+        `Missing required environment variables: ${missingVars.join(
+          ', '
+        )}. Please set these variables before starting the server.`
+      );
+    }
+  } else {
+    // Fall back to Basic auth requirements
+    const requiredEnvVars = ['WP_API_URL', 'WP_API_USERNAME', 'WP_API_PASSWORD'];
+    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+    if (missingVars.length > 0) {
+      throw new Error(
+        `Missing required environment variables: ${missingVars.join(
+          ', '
+        )}. Please set JWT_TOKEN or provide ${missingVars.join(', ')}.`
+      );
+    }
   }
 }
 
@@ -43,55 +58,66 @@ export async function wpRequest(
   log(`Request method: ${params.method || 'init'}`);
   log(`Request args: ${JSON.stringify(params.args || {})}`);
 
-  // Determine which credentials to use based on the method and args
-  let username: string;
-  let password: string;
+  // Prepare authorization header
+  let authHeader: string;
 
-  if (
-    params.method === 'tools/call' &&
-    params.args &&
-    params.args.tool &&
-    params.args.tool.startsWith('wc_reports_')
-  ) {
-    // Use WooCommerce credentials for WooCommerce report tools
-    username = process.env.WOO_CUSTOMER_KEY!;
-    password = process.env.WOO_CUSTOMER_SECRET!;
-
-    // Log which credentials are being used
-    log(`Using WooCommerce credentials for tool: ${params.args.tool}`);
-
-    // Validate WooCommerce credentials
-    if (!username || !password) {
-      throw new Error(
-        'Missing WooCommerce credentials. Please set WOO_CUSTOMER_KEY and WOO_CUSTOMER_SECRET environment variables.'
-      );
-    }
+  if (process.env.JWT_TOKEN) {
+    // Use JWT token for authentication
+    authHeader = `Bearer ${process.env.JWT_TOKEN}`;
+    log(`Using JWT token authentication`);
+    log(`Token length: ${process.env.JWT_TOKEN.length}`);
   } else {
-    // Use standard WordPress credentials for other methods
-    username = process.env.WP_API_USERNAME!;
-    password = process.env.WP_API_PASSWORD!;
+    // Determine which credentials to use based on the method and args
+    let username: string;
+    let password: string;
 
-    // Log which credentials are being used
-    log(`Using WordPress credentials for method: ${params.method || 'init'}`);
+    if (
+      params.method === 'tools/call' &&
+      params.args &&
+      params.args.tool &&
+      params.args.tool.startsWith('wc_reports_')
+    ) {
+      // Use WooCommerce credentials for WooCommerce report tools
+      username = process.env.WOO_CUSTOMER_KEY!;
+      password = process.env.WOO_CUSTOMER_SECRET!;
+
+      // Log which credentials are being used
+      log(`Using WooCommerce credentials for tool: ${params.args.tool}`);
+
+      // Validate WooCommerce credentials
+      if (!username || !password) {
+        throw new Error(
+          'Missing WooCommerce credentials. Please set WOO_CUSTOMER_KEY and WOO_CUSTOMER_SECRET environment variables.'
+        );
+      }
+    } else {
+      // Use standard WordPress credentials for other methods
+      username = process.env.WP_API_USERNAME!;
+      password = process.env.WP_API_PASSWORD!;
+
+      // Log which credentials are being used
+      log(`Using WordPress credentials for method: ${params.method || 'init'}`);
+    }
+
+    // Log credential information (without exposing the actual values)
+    log(`Username length: ${username ? username.length : 0}`);
+    log(`Password length: ${password ? password.length : 0}`);
+
+    // Prepare Basic auth header
+    const auth = Buffer.from(`${username}:${password}`).toString('base64');
+    authHeader = `Basic ${auth}`;
+    log(`Auth header length: ${auth.length}`);
   }
-
-  // Log credential information (without exposing the actual values)
-  log(`Username length: ${username ? username.length : 0}`);
-  log(`Password length: ${password ? password.length : 0}`);
 
   log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   log(`API URL: ${baseUrl}`);
-
-  // Prepare authorization header
-  const auth = Buffer.from(`${username}:${password}`).toString('base64');
-  log(`Auth header length: ${auth.length}`);
 
   // Build URL with query params for GET requests
   const url = new URL(`/?rest_route=${endpoint}`, baseUrl).toString();
   log(`Requesting URL: ${url}`);
 
   const headers: Record<string, string> = {
-    Authorization: `Basic ${auth}`,
+    Authorization: authHeader,
     'Content-Type': 'application/json',
   };
 
