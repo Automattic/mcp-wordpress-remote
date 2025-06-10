@@ -55,7 +55,7 @@ if (typeof globalThis.fetch !== 'function') {
 }
 
 async function WordPressProxy() {
-  const init = (await wpRequest({ method: 'init' })) as InitializeResult;
+  const init = (await wpRequest({ method: 'initialize' })) as InitializeResult;
 
   const server = new Server(
     {
@@ -79,6 +79,7 @@ async function WordPressProxy() {
     ListToolsRequestSchema,
     withLogging('ListTools', async (request: ListToolsRequest) => {
       log('Processing ListToolsRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'tools/list',
         cursor: request.params?.cursor,
@@ -92,6 +93,7 @@ async function WordPressProxy() {
     CallToolRequestSchema,
     withLogging('CallTool', async (request: CallToolRequest) => {
       log('Processing CallToolRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'tools/call',
         name: request.params.name,
@@ -106,6 +108,7 @@ async function WordPressProxy() {
     ListResourcesRequestSchema,
     withLogging('ListResources', async (request: ListResourcesRequest) => {
       log('Processing ListResourcesRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'resources/list',
         cursor: request.params?.cursor,
@@ -119,6 +122,7 @@ async function WordPressProxy() {
     ListResourceTemplatesRequestSchema,
     withLogging('ListResourceTemplates', async (request: ListResourceTemplatesRequest) => {
       log('Processing ListResourceTemplatesRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'resources/templates/list',
         cursor: request.params?.cursor,
@@ -132,6 +136,7 @@ async function WordPressProxy() {
     ReadResourceRequestSchema,
     withLogging('ReadResource', async (request: ReadResourceRequest) => {
       log('Processing ReadResourceRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'resources/read',
         uri: request.params.uri,
@@ -145,6 +150,7 @@ async function WordPressProxy() {
     SubscribeRequestSchema,
     withLogging('Subscribe', async (request: SubscribeRequest) => {
       log('Processing SubscribeRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'resources/subscribe',
         uri: request.params.uri,
@@ -158,6 +164,7 @@ async function WordPressProxy() {
     UnsubscribeRequestSchema,
     withLogging('Unsubscribe', async (request: UnsubscribeRequest) => {
       log('Processing UnsubscribeRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'resources/unsubscribe',
         uri: request.params.uri,
@@ -171,6 +178,7 @@ async function WordPressProxy() {
     ListPromptsRequestSchema,
     withLogging('ListPrompts', async (request: ListPromptsRequest) => {
       log('Processing ListPromptsRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'prompts/list',
         cursor: request.params?.cursor,
@@ -184,6 +192,7 @@ async function WordPressProxy() {
     GetPromptRequestSchema,
     withLogging('GetPrompt', async (request: GetPromptRequest) => {
       log('Processing GetPromptRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'prompts/get',
         name: request.params.name,
@@ -198,6 +207,7 @@ async function WordPressProxy() {
     SetLevelRequestSchema,
     withLogging('SetLevel', async (request: SetLevelRequest) => {
       log('Processing SetLevelRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'logging/setLevel',
         level: request.params.level,
@@ -211,6 +221,7 @@ async function WordPressProxy() {
     CompleteRequestSchema,
     withLogging('Complete', async (request: CompleteRequest) => {
       log('Processing CompleteRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'completion/complete',
         ref: request.params.ref,
@@ -225,6 +236,7 @@ async function WordPressProxy() {
     ListRootsRequestSchema,
     withLogging('ListRoots', async (request: ListRootsRequest) => {
       log('Processing ListRootsRequest');
+      log(JSON.stringify(request));
       const response = await wpRequest({
         method: 'roots/list',
       });
