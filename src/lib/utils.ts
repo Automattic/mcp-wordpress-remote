@@ -35,6 +35,9 @@ export function log(message: string, ...args: any[]): void {
 
   const logMessage = `${timestamp}: ${message}${formattedArgs ? ' ' + formattedArgs : ''}\n`;
 
+  // Always log to console for debugging
+  console.error(logMessage.trim());
+
   // Log to file only if LOG_FILE is provided
   if (LOG_FILE) {
     fs.appendFileSync(LOG_FILE, logMessage);
