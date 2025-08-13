@@ -102,9 +102,11 @@ const AUTHORIZATION_CODE_HTML = `
             document.getElementById('details').textContent = message;
         }
 
-        // Extract authorization code and state from URL query parameters (OAuth 2.1)
+        // Handle both OAuth 2.1 authorization code flow and implicit flow
         const urlParams = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams(window.location.hash.substring(1));
 
+        // Check for authorization code first (OAuth 2.1 flow)
         if (urlParams.has('code')) {
             const authData = {
                 code: urlParams.get('code'),
@@ -140,13 +142,63 @@ const AUTHORIZATION_CODE_HTML = `
                 displayStatus('❌ Error completing authorization', 'error');
                 displayDetails(error.message + '. Please try again.');
             });
-        } else if (urlParams.has('error')) {
+        } 
+        // Check for access token in URL fragment (implicit flow - WordPress.com)
+        else if (hashParams.has('access_token')) {
+            const tokens = {
+                access_token: hashParams.get('access_token'),
+                token_type: hashParams.get('token_type') || 'Bearer',
+                expires_in: hashParams.get('expires_in') ? parseInt(hashParams.get('expires_in')) : 3600,
+                scope: hashParams.get('scope'),
+                state: hashParams.get('state'),
+                obtained_at: Date.now()
+            };
+
+            // Send tokens to server for storage
+            fetch('/oauth/tokens', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(tokens)
+            })
+            .then(response => {
+                if (response.ok) {
+                    displayStatus('✅ Authorization successful!', 'success');
+                    displayDetails('WordPress.com OAuth authentication completed. You can now close this window.');
+                    // Auto-close after 3 seconds
+                    setTimeout(() => {
+                        displayDetails('Closing window...');
+                        setTimeout(() => window.close(), 1000);
+                    }, 3000);
+                } else {
+                    return response.json().then(err => {
+                        throw new Error(err.error || 'Failed to store access token');
+                    });
+                }
+            })
+            .catch(error => {
+                displayStatus('❌ Error completing authorization', 'error');
+                displayDetails(error.message + '. Please try again.');
+            });
+        } 
+        // Check for errors in query parameters
+        else if (urlParams.has('error')) {
             const error = urlParams.get('error');
             const errorDescription = urlParams.get('error_description');
             displayStatus('❌ Authorization failed', 'error');
             displayDetails(\`Error: \${error}\${errorDescription ? ' - ' + errorDescription : ''}\`);
-        } else {
-            displayStatus('❌ No authorization code received', 'error');
+        } 
+        // Check for errors in URL fragment (implicit flow errors)
+        else if (hashParams.has('error')) {
+            const error = hashParams.get('error');
+            const errorDescription = hashParams.get('error_description');
+            displayStatus('❌ Authorization failed', 'error');
+            displayDetails(\`Error: \${error}\${errorDescription ? ' - ' + errorDescription : ''}\`);
+        } 
+        // No authorization code or access token found
+        else {
+            displayStatus('❌ No authorization code or access token received', 'error');
             displayDetails('Please try the authorization process again.');
         }
     </script>
