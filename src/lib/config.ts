@@ -15,7 +15,9 @@ export const CONFIG = {
   OAUTH_HOST: process.env.OAUTH_HOST || '127.0.0.1',
   WP_OAUTH_CLIENT_ID: process.env.WP_OAUTH_CLIENT_ID || '', // No default - site-specific
 
-  // MCP OAuth 2.1 specific settings
+  // OAuth flow type settings
+  // 'authorization_code' (recommended): MCP-compliant OAuth 2.1 with PKCE
+  // 'implicit' (legacy): Supported for WordPress.com and legacy implementations
   OAUTH_FLOW_TYPE: (process.env.OAUTH_FLOW_TYPE || 'authorization_code') as
     | 'authorization_code'
     | 'implicit',
@@ -65,7 +67,7 @@ export const getConfig = () => ({
   /** WordPress OAuth client ID */
   wpOAuthClientId: CONFIG.WP_OAUTH_CLIENT_ID,
 
-  /** OAuth flow type (authorization_code for OAuth 2.1 compliance) */
+  /** OAuth flow type (authorization_code recommended, implicit supported for legacy) */
   oauthFlowType: CONFIG.OAUTH_FLOW_TYPE,
 
   /** Whether to use PKCE (required for OAuth 2.1) */
@@ -188,9 +190,9 @@ export function validateConfig(): { isValid: boolean; errors: string[] } {
 
     // MCP Authorization specification compliance checks
     if (CONFIG.OAUTH_FLOW_TYPE === 'implicit') {
-      errors.push(
-        'OAUTH_FLOW_TYPE=implicit is deprecated. MCP Authorization specification 2025-06-18 requires OAuth 2.1 with authorization_code flow'
-      );
+      // Note: Implicit flow is supported but not recommended for new implementations
+      // MCP Authorization specification 2025-06-18 recommends OAuth 2.1 with authorization_code flow
+      console.warn('⚠️  Using deprecated implicit OAuth flow. Consider migrating to authorization_code flow for better security.');
     }
 
     if (CONFIG.OAUTH_FLOW_TYPE === 'authorization_code' && !CONFIG.OAUTH_USE_PKCE) {
