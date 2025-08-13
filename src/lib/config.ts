@@ -27,6 +27,11 @@ export const CONFIG = {
   // Resource Indicators (RFC 8707)
   OAUTH_RESOURCE_INDICATOR: process.env.OAUTH_RESOURCE_INDICATOR !== 'false', // Resource parameter support
 
+  // OAuth Scopes Configuration
+  // OAUTH_SCOPES: Comma-separated list of OAuth scopes (e.g., "read,write" or "global")
+  // If empty, uses defaults: "global" for WordPress.com, "read,write" for self-hosted
+  OAUTH_SCOPES: process.env.OAUTH_SCOPES || '',
+
   // Timeout Configuration (in milliseconds)
   OAUTH_TIMEOUT: 30000, // 30 seconds
   LOCK_TIMEOUT: 300000, // 5 minutes
@@ -79,6 +84,9 @@ export const getConfig = () => ({
   /** Whether to use resource indicators (RFC 8707) */
   oauthResourceIndicator: CONFIG.OAUTH_RESOURCE_INDICATOR,
 
+  /** Custom OAuth scopes (comma-separated) */
+  oauthScopes: CONFIG.OAUTH_SCOPES,
+
   /** OAuth operation timeout in milliseconds */
   oauthTimeout: CONFIG.OAUTH_TIMEOUT,
 
@@ -111,6 +119,20 @@ export const getConfig = () => ({
 });
 
 /**
+ * Parse OAuth scopes from environment variable or return default scopes
+ */
+export function parseOAuthScopes(envScopes: string, defaultScopes: string[]): string[] {
+  if (!envScopes || envScopes.trim() === '') {
+    return defaultScopes;
+  }
+  
+  return envScopes
+    .split(',')
+    .map(scope => scope.trim())
+    .filter(scope => scope.length > 0);
+}
+
+/**
  * Check if the site is a WordPress.com hosted site
  */
 export function isWordPressComSite(url: string): boolean {
@@ -136,21 +158,25 @@ export function isWordPressComSite(url: string): boolean {
  */
 export function getRecommendedOAuthConfig(siteUrl: string) {
   if (isWordPressComSite(siteUrl)) {
+    const defaultScopes = ['global'];
     return {
       flowType: 'implicit' as const,
       usePKCE: false,
       useResourceIndicator: false,
       authorizationEndpoint: 'https://public-api.wordpress.com/oauth2/authorize',
       tokenEndpoint: 'https://public-api.wordpress.com/oauth2/token',
+      scopes: parseOAuthScopes(CONFIG.OAUTH_SCOPES, defaultScopes),
       description: 'WordPress.com OAuth2 (compatible mode)',
     };
   } else {
+    const defaultScopes = ['read', 'write'];
     return {
       flowType: 'authorization_code' as const,
       usePKCE: true,
       useResourceIndicator: true,
       authorizationEndpoint: undefined, // Will be discovered
       tokenEndpoint: undefined, // Will be discovered
+      scopes: parseOAuthScopes(CONFIG.OAUTH_SCOPES, defaultScopes),
       description: 'MCP-compliant OAuth 2.1',
     };
   }

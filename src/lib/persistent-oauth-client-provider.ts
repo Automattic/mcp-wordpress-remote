@@ -21,7 +21,7 @@ import { CONFIG, isWordPressComSite, getRecommendedOAuthConfig } from './config.
  */
 const WP_PERSISTENT_CONFIG = {
   authorizeEndpoint: '/wp-admin/admin.php?page=mcp-oauth-authorize',
-  scopes: ['read', 'write'],
+  scopes: ['read', 'write'], // Default for self-hosted, will be overridden for WordPress.com
   callbackPort: CONFIG.OAUTH_CALLBACK_PORT,
   host: CONFIG.OAUTH_HOST,
 };
@@ -44,6 +44,8 @@ export class PersistentWPOAuthClientProvider {
     this.options = {
       ...WP_PERSISTENT_CONFIG,
       ...options,
+      // Use recommended scopes for the site type
+      scopes: options.scopes || recommendedConfig.scopes,
     } as WPOAuthOptions;
 
     // Override authorize endpoint for WordPress.com sites

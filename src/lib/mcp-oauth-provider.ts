@@ -41,7 +41,7 @@ import {
 } from './mcp-oauth-utils.js';
 import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
 import { logger } from './utils.js';
-import { CONFIG } from './config.js';
+import { CONFIG, getRecommendedOAuthConfig } from './config.js';
 
 /**
  * MCP-compliant OAuth 2.1 Provider for WordPress
@@ -62,14 +62,17 @@ export class MCPOAuthProvider {
   private resourceMetadata: ProtectedResourceMetadata | null = null;
 
   constructor(options: Partial<MCPOAuthConfig>) {
+    const serverUrl = options.serverUrl || CONFIG.WP_API_URL;
+    const recommendedConfig = getRecommendedOAuthConfig(serverUrl);
+    
     // Build MCP-compliant configuration
     this.config = {
-      serverUrl: options.serverUrl || CONFIG.WP_API_URL,
-      resource: generateCanonicalResourceURI(options.serverUrl || CONFIG.WP_API_URL),
+      serverUrl,
+      resource: generateCanonicalResourceURI(serverUrl),
       responseType: 'code', // OAuth 2.1 uses authorization code flow
       usePKCE: true, // PKCE is required for OAuth 2.1
       redirectUri: `http://${CONFIG.OAUTH_HOST}:${CONFIG.OAUTH_CALLBACK_PORT}/oauth/callback`,
-      scopes: options.scopes || ['read', 'write'],
+      scopes: options.scopes || recommendedConfig.scopes,
       clientId: options.clientId || CONFIG.WP_OAUTH_CLIENT_ID,
       callbackPort: CONFIG.OAUTH_CALLBACK_PORT,
       host: CONFIG.OAUTH_HOST,

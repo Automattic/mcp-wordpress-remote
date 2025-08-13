@@ -114,10 +114,11 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
     if (shouldUseMCPFlow) {
       // Use MCP-compliant OAuth 2.1 provider
       if (!mcpOAuthProvider) {
+        const recommendedConfig = getRecommendedOAuthConfig(serverUrl);
         mcpOAuthProvider = new MCPOAuthProvider({
           serverUrl,
           clientId: CONFIG.WP_OAUTH_CLIENT_ID,
-          scopes: ['read', 'write'],
+          scopes: recommendedConfig.scopes,
         });
       }
 

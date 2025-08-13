@@ -273,4 +273,76 @@ describe('Configuration Module', () => {
       expect(CONFIG.WP_MCP_CONFIG_DIR).toBe('/custom/config/dir');
     });
   });
+
+  describe('parseOAuthScopes function', () => {
+    it('should return default scopes when environment variable is empty', async () => {
+      const { parseOAuthScopes } = await import('../../src/lib/config.js');
+      
+      const defaultScopes = ['read', 'write'];
+      expect(parseOAuthScopes('', defaultScopes)).toEqual(['read', 'write']);
+      expect(parseOAuthScopes('   ', defaultScopes)).toEqual(['read', 'write']);
+    });
+
+    it('should parse comma-separated scopes correctly', async () => {
+      const { parseOAuthScopes } = await import('../../src/lib/config.js');
+      
+      const defaultScopes = ['read', 'write'];
+      expect(parseOAuthScopes('global', defaultScopes)).toEqual(['global']);
+      expect(parseOAuthScopes('read,write,admin', defaultScopes)).toEqual(['read', 'write', 'admin']);
+      expect(parseOAuthScopes(' read , write , admin ', defaultScopes)).toEqual(['read', 'write', 'admin']);
+    });
+
+    it('should filter out empty scopes', async () => {
+      const { parseOAuthScopes } = await import('../../src/lib/config.js');
+      
+      const defaultScopes = ['read', 'write'];
+      expect(parseOAuthScopes('read,,write', defaultScopes)).toEqual(['read', 'write']);
+      expect(parseOAuthScopes(',read,write,', defaultScopes)).toEqual(['read', 'write']);
+    });
+
+    it('should handle single scope correctly', async () => {
+      const { parseOAuthScopes } = await import('../../src/lib/config.js');
+      
+      const defaultScopes = ['read', 'write'];
+      expect(parseOAuthScopes('global', defaultScopes)).toEqual(['global']);
+    });
+  });
+
+  describe('getRecommendedOAuthConfig with custom scopes', () => {
+    it('should use custom scopes from environment variable for WordPress.com', async () => {
+      restoreEnv = mockEnv({
+        OAUTH_SCOPES: 'global,custom'
+      });
+
+      const { getRecommendedOAuthConfig } = await import('../../src/lib/config.js');
+      
+      const config = getRecommendedOAuthConfig('https://example.wordpress.com');
+      expect(config.scopes).toEqual(['global', 'custom']);
+    });
+
+    it('should use custom scopes from environment variable for self-hosted sites', async () => {
+      restoreEnv = mockEnv({
+        OAUTH_SCOPES: 'read,write,admin'
+      });
+
+      const { getRecommendedOAuthConfig } = await import('../../src/lib/config.js');
+      
+      const config = getRecommendedOAuthConfig('https://example.com');
+      expect(config.scopes).toEqual(['read', 'write', 'admin']);
+    });
+
+    it('should fall back to defaults when OAUTH_SCOPES is empty', async () => {
+      restoreEnv = mockEnv({
+        OAUTH_SCOPES: ''
+      });
+
+      const { getRecommendedOAuthConfig } = await import('../../src/lib/config.js');
+      
+      const wpComConfig = getRecommendedOAuthConfig('https://example.wordpress.com');
+      expect(wpComConfig.scopes).toEqual(['global']);
+
+      const selfHostedConfig = getRecommendedOAuthConfig('https://example.com');
+      expect(selfHostedConfig.scopes).toEqual(['read', 'write']);
+    });
+  });
 });

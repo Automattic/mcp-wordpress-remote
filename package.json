@@ -1,6 +1,6 @@
 {
   "name": "@automattic/mcp-wordpress-remote",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "MCP WordPress Remote proxy server",
   "engines": {
     "node": ">=22.0.0"
