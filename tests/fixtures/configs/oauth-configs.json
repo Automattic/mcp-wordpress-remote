@@ -1,0 +1,25 @@
+{
+  "wordpress_com_config": {
+    "client_id": "sample_wordpress_com_client_id",
+    "client_secret": "sample_wordpress_com_client_secret",
+    "authorization_endpoint": "https://public-api.wordpress.com/oauth2/authorize",
+    "token_endpoint": "https://public-api.wordpress.com/oauth2/token",
+    "scope": "global"
+  },
+  "self_hosted_config": {
+    "client_id": "sample_self_hosted_client_id",
+    "client_secret": "sample_self_hosted_client_secret",
+    "authorization_endpoint": "https://example.com/wp-json/oauth/v2/authorize",
+    "token_endpoint": "https://example.com/wp-json/oauth/v2/token",
+    "scope": "basic"
+  },
+  "invalid_config": {
+    "client_id": "",
+    "client_secret": null,
+    "authorization_endpoint": "invalid-url",
+    "token_endpoint": "invalid-url"
+  },
+  "minimal_config": {
+    "client_id": "minimal_client_id"
+  }
+}

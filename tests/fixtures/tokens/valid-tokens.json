@@ -1,0 +1,26 @@
+{
+  "wordpress_com_token": {
+    "access_token": "sample_access_token_wordpress_com",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "scope": "global",
+    "obtained_at": 1704067200000,
+    "refresh_token": "sample_refresh_token_wordpress_com"
+  },
+  "self_hosted_token": {
+    "access_token": "sample_access_token_self_hosted",
+    "token_type": "Bearer",
+    "expires_in": 7200,
+    "scope": "basic",
+    "obtained_at": 1704067200000,
+    "refresh_token": "sample_refresh_token_self_hosted"
+  },
+  "expired_token": {
+    "access_token": "expired_access_token",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "scope": "global",
+    "obtained_at": 1704063600000,
+    "refresh_token": "expired_refresh_token"
+  }
+}

@@ -3,46 +3,96 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createHash } from 'crypto';
 import { createServer } from 'http';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
+import { CONFIG } from './config.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 // Version of the package
-export const MCP_WORDPRESS_REMOTE_VERSION = '0.1.14';
+export const MCP_WORDPRESS_REMOTE_VERSION = '0.2.1';
 
-// Logging configuration
-const LOG_FILE = process.env.LOG_FILE || null;
+// Log levels
+export enum LogLevel {
+  ERROR = 0,
+  WARN = 1,
+  INFO = 2,
+  DEBUG = 3,
+}
 
-// Ensure log diectory exists if logging to file is enabled
-if (LOG_FILE) {
-  const logDir = path.dirname(LOG_FILE);
+// Current log level (can be overridden by environment)
+const CURRENT_LOG_LEVEL = process.env.LOG_LEVEL
+  ? parseInt(process.env.LOG_LEVEL)
+  : CONFIG.NODE_ENV === 'development'
+    ? LogLevel.DEBUG
+    : LogLevel.INFO;
+
+// Ensure log directory exists if logging to file is enabled
+if (CONFIG.LOG_FILE) {
+  const logDir = path.dirname(CONFIG.LOG_FILE);
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
   }
 }
 
 /**
- * Log a message to the console and optionally to a file
+ * Enhanced logging function with levels and categories
  *
  * @param message - The message to log
+ * @param level - Log level (default: INFO)
+ * @param category - Log category for filtering (default: 'GENERAL')
  * @param args - Additional arguments to log
  */
-export function log(message: string, ...args: any[]): void {
+export function log(
+  message: string,
+  level: LogLevel = LogLevel.INFO,
+  category: string = 'GENERAL',
+  ...args: any[]
+): void {
+  // Check if we should log at this level
+  if (level > CURRENT_LOG_LEVEL) {
+    return;
+  }
+
   const timestamp = new Date().toISOString();
+  const levelName = LogLevel[level];
   const formattedArgs =
     args.length > 0
-      ? args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : arg)).join(' ')
+      ? args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg)).join(' ')
       : '';
 
-  const logMessage = `${timestamp}: ${message}${formattedArgs ? ' ' + formattedArgs : ''}\n`;
+  const logMessage = `${timestamp} [${levelName}] [${category}] ${message}${formattedArgs ? '\n' + formattedArgs : ''}\n`;
 
-  // Always log to console for debugging
-  console.error(logMessage.trim());
+  // Log to stderr to avoid interfering with MCP JSON-RPC communication on stdout
+  process.stderr.write(logMessage);
 
   // Log to file only if LOG_FILE is provided
-  if (LOG_FILE) {
-    fs.appendFileSync(LOG_FILE, logMessage);
+  if (CONFIG.LOG_FILE) {
+    fs.appendFileSync(CONFIG.LOG_FILE, logMessage);
   }
 }
+
+/**
+ * Convenience logging functions
+ */
+export const logger = {
+  error: (message: string, category = 'ERROR', ...args: any[]) =>
+    log(message, LogLevel.ERROR, category, ...args),
+  warn: (message: string, category = 'WARN', ...args: any[]) =>
+    log(message, LogLevel.WARN, category, ...args),
+  info: (message: string, category = 'INFO', ...args: any[]) =>
+    log(message, LogLevel.INFO, category, ...args),
+  debug: (message: string, category = 'DEBUG', ...args: any[]) =>
+    log(message, LogLevel.DEBUG, category, ...args),
+
+  // Specialized category loggers
+  auth: (message: string, level = LogLevel.INFO, ...args: any[]) =>
+    log(message, level, 'AUTH', ...args),
+  oauth: (message: string, level = LogLevel.INFO, ...args: any[]) =>
+    log(message, level, 'OAUTH', ...args),
+  api: (message: string, level = LogLevel.INFO, ...args: any[]) =>
+    log(message, level, 'API', ...args),
+  config: (message: string, level = LogLevel.INFO, ...args: any[]) =>
+    log(message, level, 'CONFIG', ...args),
+};
 
 /**
  * Set up signal handlers for cleanup
@@ -51,7 +101,7 @@ export function setupSignalHandlers(cleanup: () => Promise<void>): void {
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   signals.forEach(signal => {
     process.on(signal, async () => {
-      log(`\nReceived ${signal}, cleaning up...`);
+      logger.info(`Received ${signal}, cleaning up...`, 'SYSTEM');
       await cleanup();
       process.exit(0);
     });
@@ -71,7 +121,7 @@ export function getServerUrlHash(serverUrl: string): string {
 export function createCoordinatorServer(port: number): { server: any; port: number } {
   const server = createServer();
   server.listen(port, () => {
-    log(`Coordinator server listening on port ${port}`);
+    logger.info(`Coordinator server listening on port ${port}`, 'COORDINATION');
   });
 
   return { server, port };
@@ -89,15 +139,15 @@ export async function connectToRemoteServer(
 
   // Set up message and error handlers
   transport.onmessage = message => {
-    log('Received message:', JSON.stringify(message, null, 2));
+    logger.debug('Received message:', 'TRANSPORT', JSON.stringify(message, null, 2));
   };
 
   transport.onerror = error => {
-    log('Transport error:', error);
+    logger.error('Transport error:', 'TRANSPORT', error);
   };
 
   transport.onclose = () => {
-    log('Connection closed.');
+    logger.info('Connection closed.', 'TRANSPORT');
   };
 
   return transport;
