@@ -1,0 +1,107 @@
+{
+  "user_info_success": {
+    "status": 200,
+    "data": {
+      "ID": 987654321,
+      "login": "testuser",
+      "email": "test@example.com",
+      "display_name": "Test User",
+      "primary_blog": 123456789,
+      "meta": {
+        "links": {
+          "self": "https://public-api.wordpress.com/rest/v1.1/me",
+          "site": "https://public-api.wordpress.com/rest/v1.1/sites/123456789"
+        }
+      }
+    }
+  },
+  "site_info_success": {
+    "status": 200,
+    "data": {
+      "ID": 123456789,
+      "name": "Test WordPress Site",
+      "description": "A test site for OAuth testing",
+      "URL": "https://test-site.wordpress.com",
+      "jetpack": false,
+      "post_count": 42,
+      "subscribers_count": 10,
+      "capabilities": {
+        "edit_posts": true,
+        "publish_posts": true,
+        "manage_options": true
+      }
+    }
+  },
+  "posts_list_success": {
+    "status": 200,
+    "data": {
+      "posts": [
+        {
+          "ID": 101,
+          "title": "Test Post 1",
+          "content": "This is the content of test post 1",
+          "status": "publish",
+          "date": "2024-01-01T12:00:00Z",
+          "author": {
+            "ID": 987654321,
+            "login": "testuser",
+            "display_name": "Test User"
+          }
+        },
+        {
+          "ID": 102,
+          "title": "Test Post 2",
+          "content": "This is the content of test post 2",
+          "status": "draft",
+          "date": "2024-01-02T12:00:00Z",
+          "author": {
+            "ID": 987654321,
+            "login": "testuser",
+            "display_name": "Test User"
+          }
+        }
+      ],
+      "found": 2,
+      "meta": {
+        "links": {
+          "self": "https://public-api.wordpress.com/rest/v1.1/sites/123456789/posts"
+        }
+      }
+    }
+  },
+  "unauthorized_error": {
+    "status": 401,
+    "error": {
+      "error": "authorization_required",
+      "error_description": "An active access token must be used to query information about the current user."
+    }
+  },
+  "forbidden_error": {
+    "status": 403,
+    "error": {
+      "error": "forbidden",
+      "error_description": "User cannot access this resource."
+    }
+  },
+  "not_found_error": {
+    "status": 404,
+    "error": {
+      "error": "unknown_blog",
+      "error_description": "The blog or site does not exist."
+    }
+  },
+  "rate_limit_error": {
+    "status": 429,
+    "error": {
+      "error": "rate_limited",
+      "error_description": "Too many requests. Please wait before making more requests."
+    }
+  },
+  "server_error": {
+    "status": 500,
+    "error": {
+      "error": "internal_server_error",
+      "error_description": "An internal server error occurred."
+    }
+  }
+}

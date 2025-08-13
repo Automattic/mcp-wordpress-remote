@@ -2,9 +2,11 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { InitializeResult } from './lib/schema/2024-11-05/schema.js';
+import { InitializeResult } from './lib/types.js';
 import { wpRequest } from './lib/wordpress-api.js';
-import { log } from './lib/utils.js';
+import { logger, LogLevel } from './lib/utils.js';
+import { cleanupExpiredTokens } from './lib/persistent-auth-config.js';
+import { CONFIG } from './lib/config.js';
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -40,21 +42,36 @@ type ListRootsRequest = z.infer<typeof ListRootsRequestSchema>;
 const requiredNodeVersion = 22;
 const currentNodeVersion = parseInt(process.version.slice(1).split('.')[0]);
 if (currentNodeVersion < requiredNodeVersion) {
-  log(`Error: This application requires Node.js version ${requiredNodeVersion} or higher.`);
-  log(`Current version: ${process.version}`);
+  logger.error(
+    `This application requires Node.js version ${requiredNodeVersion} or higher.`,
+    'SYSTEM'
+  );
+  logger.error(`Current version: ${process.version}`, 'SYSTEM');
   process.exit(1);
 }
 
 // Check if fetch is available
 if (typeof globalThis.fetch !== 'function') {
-  log(
-    'Error: This application requires the fetch API, which is not available in your Node.js environment.'
+  logger.error(
+    'This application requires the fetch API, which is not available in your Node.js environment.',
+    'SYSTEM'
   );
-  log('Please ensure you are using Node.js 22 or later, or install node-fetch.');
+  logger.error('Please ensure you are using Node.js 22 or later, or install node-fetch.', 'SYSTEM');
   process.exit(1);
 }
 
 async function WordPressProxy() {
+  logger.info('Starting WordPress MCP Proxy with enhanced authentication', 'PROXY');
+
+  // Clean up any expired tokens on startup
+  try {
+    await cleanupExpiredTokens();
+  } catch (error) {
+    logger.warn('Error cleaning up expired tokens', 'PROXY', error);
+  }
+
+  // Initialize the WordPress API connection (this will trigger OAuth flow if needed)
+  logger.info('Initializing connection to WordPress API...', 'PROXY');
   const init = (await wpRequest({ method: 'initialize' })) as InitializeResult;
 
   const server = new Server(
@@ -68,18 +85,22 @@ async function WordPressProxy() {
   );
 
   const withLogging = (schema: string, handler: Function) => async (request: any) => {
-    log(`Received ${schema} request:`, JSON.stringify(request));
-    const response = await handler(request);
-    log(`${schema} response:`, JSON.stringify(response));
-    return response;
+    logger.debug(`Received ${schema} request`, 'MCP', request);
+    try {
+      const response = await handler(request);
+      logger.debug(`${schema} response sent`, 'MCP');
+      return response;
+    } catch (error) {
+      logger.error(`Error handling ${schema} request`, 'MCP', error);
+      throw error;
+    }
   };
 
   // List Tools Handler
   server.setRequestHandler(
     ListToolsRequestSchema,
     withLogging('ListTools', async (request: ListToolsRequest) => {
-      log('Processing ListToolsRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing ListToolsRequest', 'MCP');
       const response = await wpRequest({
         method: 'tools/list',
         cursor: request.params?.cursor,
@@ -92,8 +113,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     CallToolRequestSchema,
     withLogging('CallTool', async (request: CallToolRequest) => {
-      log('Processing CallToolRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing CallToolRequest', 'MCP');
       const response = await wpRequest({
         method: 'tools/call',
         name: request.params.name,
@@ -107,8 +127,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     ListResourcesRequestSchema,
     withLogging('ListResources', async (request: ListResourcesRequest) => {
-      log('Processing ListResourcesRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing ListResourcesRequest', 'MCP');
       const response = await wpRequest({
         method: 'resources/list',
         cursor: request.params?.cursor,
@@ -121,8 +140,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     ListResourceTemplatesRequestSchema,
     withLogging('ListResourceTemplates', async (request: ListResourceTemplatesRequest) => {
-      log('Processing ListResourceTemplatesRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing ListResourceTemplatesRequest', 'MCP');
       const response = await wpRequest({
         method: 'resources/templates/list',
         cursor: request.params?.cursor,
@@ -135,8 +153,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     ReadResourceRequestSchema,
     withLogging('ReadResource', async (request: ReadResourceRequest) => {
-      log('Processing ReadResourceRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing ReadResourceRequest', 'MCP');
       const response = await wpRequest({
         method: 'resources/read',
         uri: request.params.uri,
@@ -149,8 +166,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     SubscribeRequestSchema,
     withLogging('Subscribe', async (request: SubscribeRequest) => {
-      log('Processing SubscribeRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing SubscribeRequest', 'MCP');
       const response = await wpRequest({
         method: 'resources/subscribe',
         uri: request.params.uri,
@@ -163,8 +179,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     UnsubscribeRequestSchema,
     withLogging('Unsubscribe', async (request: UnsubscribeRequest) => {
-      log('Processing UnsubscribeRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing UnsubscribeRequest', 'MCP');
       const response = await wpRequest({
         method: 'resources/unsubscribe',
         uri: request.params.uri,
@@ -177,8 +192,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     ListPromptsRequestSchema,
     withLogging('ListPrompts', async (request: ListPromptsRequest) => {
-      log('Processing ListPromptsRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing ListPromptsRequest', 'MCP');
       const response = await wpRequest({
         method: 'prompts/list',
         cursor: request.params?.cursor,
@@ -191,8 +205,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     GetPromptRequestSchema,
     withLogging('GetPrompt', async (request: GetPromptRequest) => {
-      log('Processing GetPromptRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing GetPromptRequest', 'MCP');
       const response = await wpRequest({
         method: 'prompts/get',
         name: request.params.name,
@@ -206,8 +219,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     SetLevelRequestSchema,
     withLogging('SetLevel', async (request: SetLevelRequest) => {
-      log('Processing SetLevelRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing SetLevelRequest', 'MCP');
       const response = await wpRequest({
         method: 'logging/setLevel',
         level: request.params.level,
@@ -220,8 +232,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     CompleteRequestSchema,
     withLogging('Complete', async (request: CompleteRequest) => {
-      log('Processing CompleteRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing CompleteRequest', 'MCP');
       const response = await wpRequest({
         method: 'completion/complete',
         ref: request.params.ref,
@@ -235,8 +246,7 @@ async function WordPressProxy() {
   server.setRequestHandler(
     ListRootsRequestSchema,
     withLogging('ListRoots', async (request: ListRootsRequest) => {
-      log('Processing ListRootsRequest');
-      log(JSON.stringify(request));
+      logger.debug('Processing ListRootsRequest', 'MCP');
       const response = await wpRequest({
         method: 'roots/list',
       });
@@ -249,10 +259,10 @@ async function WordPressProxy() {
   server
     .connect(transport)
     .then(() => {
-      log('MCP server connected to transport successfully');
+      logger.info('MCP server connected to transport successfully', 'PROXY');
     })
     .catch(error => {
-      log(`Error starting MCP server:`, error);
+      logger.error('Error starting MCP server', 'PROXY', error);
       process.exit(1);
     });
 }

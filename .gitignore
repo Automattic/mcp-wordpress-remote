@@ -6,3 +6,43 @@ logs/
 *.log
 /mcp-config.json
 /mcp-proxy.log
+
+# Testing artifacts
+coverage/
+test-results/
+playwright-report/
+*.coverage
+junit.xml
+
+# Jest and test cache
+.jest/
+jest-cache/
+
+# Playwright artifacts
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# Test temporary files
+tests/temp/
+tests/fixtures/temp/
+.tmp/
+tmp/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
