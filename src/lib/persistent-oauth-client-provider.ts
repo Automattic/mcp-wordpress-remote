@@ -14,7 +14,7 @@ import {
 import { WPTokens, WPClientInfo, OAuthError, WPOAuthOptions } from './oauth-types.js';
 import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
 import { logger } from './utils.js';
-import { CONFIG } from './config.js';
+import { CONFIG, isWordPressComSite, getRecommendedOAuthConfig } from './config.js';
 
 /**
  * WordPress OAuth configuration for persistent storage
@@ -37,10 +37,22 @@ export class PersistentWPOAuthClientProvider {
   private authPromise: Promise<WPTokens> | null = null;
 
   constructor(options: Partial<WPOAuthOptions>) {
+    // Determine the correct OAuth configuration based on site type
+    const isWpCom = isWordPressComSite(options.serverUrl || '');
+    const recommendedConfig = getRecommendedOAuthConfig(options.serverUrl || '');
+    
     this.options = {
       ...WP_PERSISTENT_CONFIG,
       ...options,
     } as WPOAuthOptions;
+
+    // Override authorize endpoint for WordPress.com sites
+    if (isWpCom && recommendedConfig.authorizationEndpoint) {
+      this.options.authorizeEndpoint = recommendedConfig.authorizationEndpoint;
+      logger.debug('Using WordPress.com OAuth endpoint', 'OAUTH', {
+        endpoint: recommendedConfig.authorizationEndpoint
+      });
+    }
 
     this.serverUrlHash = generateServerUrlHash(this.options.serverUrl);
     this.events = new EventEmitter();
@@ -54,6 +66,8 @@ export class PersistentWPOAuthClientProvider {
       serverHash: this.serverUrlHash,
       clientId: this.options.clientId || 'auto-generated',
       callbackPort: this.options.callbackPort,
+      authorizeEndpoint: this.options.authorizeEndpoint,
+      isWordPressCom: isWpCom,
     });
   }
 
@@ -271,7 +285,6 @@ export class PersistentWPOAuthClientProvider {
    * Build the WordPress authorization URL
    */
   private buildAuthorizationUrl(callbackUrl: string, state: string): string {
-    const baseUrl = this.options.serverUrl.replace(/\/+$/, ''); // Remove trailing slashes
     const authEndpoint = this.options.authorizeEndpoint || WP_PERSISTENT_CONFIG.authorizeEndpoint;
 
     const params = new URLSearchParams({
@@ -286,7 +299,15 @@ export class PersistentWPOAuthClientProvider {
       params.set('client_id', this.options.clientId);
     }
 
-    return `${baseUrl}${authEndpoint}?${params.toString()}`;
+    // Check if authEndpoint is a full URL (for WordPress.com) or relative path (for self-hosted)
+    if (authEndpoint.startsWith('http://') || authEndpoint.startsWith('https://')) {
+      // Full URL - use as is (WordPress.com case)
+      return `${authEndpoint}?${params.toString()}`;
+    } else {
+      // Relative path - construct with base URL (self-hosted WordPress case)
+      const baseUrl = this.options.serverUrl.replace(/\/+$/, ''); // Remove trailing slashes
+      return `${baseUrl}${authEndpoint}?${params.toString()}`;
+    }
   }
 
   /**

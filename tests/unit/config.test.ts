@@ -26,7 +26,7 @@ describe('Configuration Module', () => {
       const { CONFIG } = await import('../../src/lib/config.js');
       
       expect(CONFIG.WP_API_URL).toBe('https://example.com');
-      expect(CONFIG.OAUTH_ENABLED).toBe(true);
+      expect(CONFIG.OAUTH_ENABLED).toBe(false); // OAuth is disabled by default
       expect(CONFIG.OAUTH_CALLBACK_PORT).toBe(3000);
       expect(CONFIG.OAUTH_HOST).toBe('127.0.0.1');
       expect(CONFIG.WP_OAUTH_CLIENT_ID).toBe('');
@@ -76,6 +76,7 @@ describe('Configuration Module', () => {
         WP_API_URL: 'https://test-site.wordpress.com',
         WP_OAUTH_CLIENT_ID: 'test_client_id',
         OAUTH_CALLBACK_PORT: '3000',
+        OAUTH_ENABLED: 'true', // Enable OAuth for validation to pass
       });
 
       const { validateConfig } = await import('../../src/lib/config.js');
@@ -102,6 +103,7 @@ describe('Configuration Module', () => {
       restoreEnv = mockEnv({
         WP_API_URL: 'https://test-site.com',
         WP_OAUTH_CLIENT_ID: 'test_client_id',
+        OAUTH_ENABLED: 'true', // Enable OAuth for validation to pass
       });
 
       const { validateConfig } = await import('../../src/lib/config.js');
@@ -115,6 +117,7 @@ describe('Configuration Module', () => {
         WP_API_URL: 'https://test-site.com',
         WP_OAUTH_CLIENT_ID: 'test_client_id',
         OAUTH_CALLBACK_PORT: '99999',
+        OAUTH_ENABLED: 'true', // Enable OAuth for port validation to trigger
       });
 
       const { validateConfig } = await import('../../src/lib/config.js');
