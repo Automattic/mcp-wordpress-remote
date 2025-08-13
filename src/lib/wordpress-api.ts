@@ -55,11 +55,17 @@ function constructApiUrl(baseUrl: string, defaultEndpoint: string): string {
     const urlObj = new URL(cleanUrl);
     const hasCustomPath = urlObj.pathname && urlObj.pathname !== '/' && urlObj.pathname.length > 0;
     
+    // Check if this is WordPress.com public API
+    const isWordPressComPublicApi = urlObj.hostname === 'public-api.wordpress.com';
+    
     if (hasCustomPath) {
       // URL has a custom path - use it exactly as provided
       return cleanUrl;
+    } else if (isWordPressComPublicApi) {
+      // WordPress.com public API uses direct path routing, not REST route params
+      return new URL(defaultEndpoint, cleanUrl).toString();
     } else {
-      // URL has no path - use WordPress REST route format with default endpoint
+      // Standard WordPress installation - use REST route format with default endpoint
       return new URL(`/?rest_route=${defaultEndpoint}`, cleanUrl).toString();
     }
   } catch (error) {
@@ -185,7 +191,7 @@ export async function wpRequest(
   // Validate environment variables first
   validateEnvironment();
 
-  const endpoint = '/wp/v2/wpmcp'; // Default WordPress MCP endpoint
+  const endpoint = '/wpcom/v2/mcp/v1'; // WordPress.com MCP endpoint
   const method = 'POST';
 
   // Log the request parameters for debugging
@@ -286,6 +292,8 @@ export async function wpRequest(
 
   try {
     logger.api('Sending request to WordPress API...');
+    logger.debug(`Request URL: ${url}`, 'API');
+    logger.debug(`Request method: ${method}`, 'API');
     const response = await fetch(url, fetchOptions);
     logger.debug(`Response status: ${response.status}`, 'API');
 
