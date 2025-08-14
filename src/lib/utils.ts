@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createHash } from 'crypto';
 import { createServer } from 'http';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
-import { CONFIG } from './config.js';
+// Note: We don't import CONFIG here to avoid circular dependencies
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -21,13 +21,13 @@ export enum LogLevel {
 // Current log level (can be overridden by environment)
 const CURRENT_LOG_LEVEL = process.env.LOG_LEVEL
   ? parseInt(process.env.LOG_LEVEL)
-  : CONFIG.NODE_ENV === 'development'
+  : (process.env.NODE_ENV || 'development') === 'development'
     ? LogLevel.DEBUG
     : LogLevel.INFO;
 
 // Ensure log directory exists if logging to file is enabled
-if (CONFIG.LOG_FILE) {
-  const logDir = path.dirname(CONFIG.LOG_FILE);
+if (process.env.LOG_FILE) {
+  const logDir = path.dirname(process.env.LOG_FILE);
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
   }
@@ -65,8 +65,8 @@ export function log(
   process.stderr.write(logMessage);
 
   // Log to file only if LOG_FILE is provided
-  if (CONFIG.LOG_FILE) {
-    fs.appendFileSync(CONFIG.LOG_FILE, logMessage);
+  if (process.env.LOG_FILE) {
+    fs.appendFileSync(process.env.LOG_FILE, logMessage);
   }
 }
 

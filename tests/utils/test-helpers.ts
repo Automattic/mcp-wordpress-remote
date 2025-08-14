@@ -9,12 +9,12 @@ import { mkdtemp, writeFile, readFile, rm } from 'fs/promises';
 import { createMockToken, createMockWordPressResponse, createMockErrorResponse } from './mock-factories.js';
 
 /**
- * Sets up HTTP mocks for WordPress.com API
+ * Sets up HTTP mocks for WordPress API
  */
 export class WordPressMockServer {
   public scope: nock.Scope;
 
-  constructor(baseUrl: string = 'https://public-api.wordpress.com') {
+  constructor(baseUrl: string = 'https://api.example.com') {
     this.scope = nock(baseUrl);
   }
 
@@ -86,7 +86,7 @@ export class WordPressMockServer {
       .reply(200, {
         ID: parseInt(siteId),
         name: 'Test WordPress Site',
-        URL: `https://test-site-${siteId}.wordpress.com`,
+        URL: `https://test-site-${siteId}.com`,
         ...siteInfo,
       });
   }
@@ -104,7 +104,7 @@ export class WordPressMockServer {
         found: posts.length,
         meta: {
           links: {
-            self: `https://public-api.wordpress.com/rest/v1.1/sites/${siteId}/posts`,
+            self: `https://api.example.com/rest/v1.1/sites/${siteId}/posts`,
           },
         },
       });

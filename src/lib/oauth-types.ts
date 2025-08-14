@@ -62,6 +62,7 @@ export interface WPOAuthOptions {
   serverUrl: string;
   callbackPort: number;
   host: string;
+  timeout?: number;
   clientId?: string;
   scopes?: string[];
   authorizeEndpoint?: string;

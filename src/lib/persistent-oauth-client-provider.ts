@@ -14,17 +14,9 @@ import {
 import { WPTokens, WPClientInfo, OAuthError, WPOAuthOptions } from './oauth-types.js';
 import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
 import { logger } from './utils.js';
-import { CONFIG, isWordPressComSite, getRecommendedOAuthConfig } from './config.js';
+import { CONFIG, getDefaultOAuthScopes, getOAuthCallbackPort } from './config.js';
 
-/**
- * WordPress OAuth configuration for persistent storage
- */
-const WP_PERSISTENT_CONFIG = {
-  authorizeEndpoint: '/wp-admin/admin.php?page=mcp-oauth-authorize',
-  scopes: ['read', 'write'], // Default for self-hosted, will be overridden for WordPress.com
-  callbackPort: CONFIG.OAUTH_CALLBACK_PORT,
-  host: CONFIG.OAUTH_HOST,
-};
+
 
 /**
  * Persistent WordPress OAuth Client Provider
@@ -37,24 +29,18 @@ export class PersistentWPOAuthClientProvider {
   private authPromise: Promise<WPTokens> | null = null;
 
   constructor(options: Partial<WPOAuthOptions>) {
-    // Determine the correct OAuth configuration based on site type
-    const isWpCom = isWordPressComSite(options.serverUrl || '');
-    const recommendedConfig = getRecommendedOAuthConfig(options.serverUrl || '');
-    
     this.options = {
-      ...WP_PERSISTENT_CONFIG,
-      ...options,
-      // Use recommended scopes for the site type
-      scopes: options.scopes || recommendedConfig.scopes,
+      // Base configuration from CONFIG and explicit options
+      serverUrl: options.serverUrl || CONFIG.WP_API_URL,
+      host: options.host || CONFIG.OAUTH_HOST,
+      scopes: options.scopes || getDefaultOAuthScopes(),
+      callbackPort: options.callbackPort || CONFIG.OAUTH_CALLBACK_PORT || 0, // 0 = auto-select
+      timeout: options.timeout || CONFIG.OAUTH_TIMEOUT,
+      // OAuth endpoints must be explicitly configured
+      authorizeEndpoint: options.authorizeEndpoint || CONFIG.OAUTH_AUTHORIZE_ENDPOINT,
+      clientId: options.clientId || CONFIG.WP_OAUTH_CLIENT_ID,
+      ...options, // Allow any additional options to override defaults
     } as WPOAuthOptions;
-
-    // Override authorize endpoint for WordPress.com sites
-    if (isWpCom && recommendedConfig.authorizationEndpoint) {
-      this.options.authorizeEndpoint = recommendedConfig.authorizationEndpoint;
-      logger.debug('Using WordPress.com OAuth endpoint', 'OAUTH', {
-        endpoint: recommendedConfig.authorizationEndpoint
-      });
-    }
 
     this.serverUrlHash = generateServerUrlHash(this.options.serverUrl);
     this.events = new EventEmitter();
@@ -69,7 +55,6 @@ export class PersistentWPOAuthClientProvider {
       clientId: this.options.clientId || 'auto-generated',
       callbackPort: this.options.callbackPort,
       authorizeEndpoint: this.options.authorizeEndpoint,
-      isWordPressCom: isWpCom,
     });
   }
 
@@ -214,14 +199,19 @@ export class PersistentWPOAuthClientProvider {
    * Perform the actual OAuth authorization
    */
   private async performAuthorization(): Promise<WPTokens> {
+    // Use smart port selection or fixed port as configured
+    const callbackPort = this.options.callbackPort === 0 
+      ? await getOAuthCallbackPort() 
+      : this.options.callbackPort;
+      
     const callbackServerOptions = {
-      port: this.options.callbackPort,
+      port: callbackPort,
       host: this.options.host,
       serverUrlHash: this.serverUrlHash,
       timeout: CONFIG.OAUTH_TIMEOUT,
     };
 
-    logger.oauth(`Setting up callback server on ${this.options.host}:${this.options.callbackPort}`);
+    logger.oauth(`Setting up callback server on ${this.options.host}:${callbackPort}`);
     const callbackServer = setupWPOAuthCallbackServer(callbackServerOptions, this.events);
 
     try {
@@ -287,12 +277,17 @@ export class PersistentWPOAuthClientProvider {
    * Build the WordPress authorization URL
    */
   private buildAuthorizationUrl(callbackUrl: string, state: string): string {
-    const authEndpoint = this.options.authorizeEndpoint || WP_PERSISTENT_CONFIG.authorizeEndpoint;
+    if (!this.options.authorizeEndpoint) {
+      throw new OAuthError(
+        'OAuth authorize endpoint not configured. Please set OAUTH_AUTHORIZE_ENDPOINT environment variable.',
+        'MISSING_AUTHORIZE_ENDPOINT'
+      );
+    }
 
     const params = new URLSearchParams({
       response_type: 'token', // Implicit flow
       redirect_uri: callbackUrl,
-      scope: this.options.scopes?.join(' ') || WP_PERSISTENT_CONFIG.scopes.join(' '),
+      scope: this.options.scopes?.join(' ') || getDefaultOAuthScopes().join(' '),
       state: state,
     });
 
@@ -301,14 +296,14 @@ export class PersistentWPOAuthClientProvider {
       params.set('client_id', this.options.clientId);
     }
 
-    // Check if authEndpoint is a full URL (for WordPress.com) or relative path (for self-hosted)
-    if (authEndpoint.startsWith('http://') || authEndpoint.startsWith('https://')) {
-      // Full URL - use as is (WordPress.com case)
-      return `${authEndpoint}?${params.toString()}`;
+    // Check if authorizeEndpoint is a full URL or relative path
+    if (this.options.authorizeEndpoint.startsWith('http://') || this.options.authorizeEndpoint.startsWith('https://')) {
+      // Full URL - use as is
+      return `${this.options.authorizeEndpoint}?${params.toString()}`;
     } else {
-      // Relative path - construct with base URL (self-hosted WordPress case)
+      // Relative path - construct with base URL
       const baseUrl = this.options.serverUrl.replace(/\/+$/, ''); // Remove trailing slashes
-      return `${baseUrl}${authEndpoint}?${params.toString()}`;
+      return `${baseUrl}${this.options.authorizeEndpoint}?${params.toString()}`;
     }
   }
 

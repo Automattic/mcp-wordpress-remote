@@ -40,15 +40,15 @@ export function createMockClientInfo(overrides: Partial<WPClientInfo> = {}): WPC
   return {
     client_id: 'mock_client_id_' + Math.random().toString(36).substr(2, 9),
     client_secret: 'mock_client_secret_' + Math.random().toString(36).substr(2, 9),
-    authorization_endpoint: 'https://public-api.wordpress.com/oauth2/authorize',
-    token_endpoint: 'https://public-api.wordpress.com/oauth2/token',
+    authorization_endpoint: 'https://api.example.com/oauth2/authorize',
+    token_endpoint: 'https://api.example.com/oauth2/token',
     scope: 'global',
     ...overrides,
   };
 }
 
 /**
- * Creates a mock WordPress.com API response
+ * Creates a mock WordPress API response
  */
 export function createMockWordPressResponse<T = any>(
   data: T,
@@ -131,7 +131,7 @@ export function createMockAuthUrl(clientId: string, state?: string): string {
     ...(state && { state }),
   });
   
-  return `https://public-api.wordpress.com/oauth2/authorize?${params.toString()}`;
+  return `https://api.example.com/oauth2/authorize?${params.toString()}`;
 }
 
 /**
@@ -152,7 +152,7 @@ export function createMockSiteInfo(overrides: any = {}) {
     ID: 123456789,
     name: 'Test WordPress Site',
     description: 'A test site for OAuth testing',
-    URL: 'https://test-site.wordpress.com',
+    URL: 'https://test-site.com',
     capabilities: {
       edit_posts: true,
       publish_posts: true,
@@ -198,7 +198,7 @@ export function createMockPostsResponse(count: number = 3) {
     found: count,
     meta: {
       links: {
-        self: 'https://public-api.wordpress.com/rest/v1.1/sites/123456789/posts',
+        self: 'https://api.example.com/rest/v1.1/sites/123456789/posts',
       },
     },
   };
@@ -211,7 +211,7 @@ export function createMockEnv(overrides: Record<string, string> = {}): Record<st
   return {
     MCP_WP_CLIENT_ID: 'test_client_id',
     MCP_WP_CLIENT_SECRET: 'test_client_secret',
-    MCP_WP_SITE_URL: 'https://test-site.wordpress.com',
+    MCP_WP_SITE_URL: 'https://test-site.com',
     MCP_WP_LOG_LEVEL: 'error',
     NODE_ENV: 'test',
     ...overrides,

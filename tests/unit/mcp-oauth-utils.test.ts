@@ -165,7 +165,7 @@ describe('MCP OAuth Utils', () => {
       const { buildAuthorizationUrl } = await import('../../src/lib/mcp-oauth-utils.js');
       
       const url = buildAuthorizationUrl(
-        'https://public-api.wordpress.com/oauth2/authorize',
+        'https://example.com/oauth2/authorize',
         'test_client_id',
         'http://localhost:3000/callback',
         ['global'],
@@ -175,7 +175,7 @@ describe('MCP OAuth Utils', () => {
 
       const urlObj = new URL(url);
 
-      expect(urlObj.origin + urlObj.pathname).toBe('https://public-api.wordpress.com/oauth2/authorize');
+      expect(urlObj.origin + urlObj.pathname).toBe('https://example.com/oauth2/authorize');
       expect(urlObj.searchParams.get('response_type')).toBe('code');
       expect(urlObj.searchParams.get('client_id')).toBe('test_client_id');
       expect(urlObj.searchParams.get('redirect_uri')).toBe('http://localhost:3000/callback');

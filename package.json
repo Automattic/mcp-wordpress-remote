@@ -38,7 +38,11 @@
     "test:integration": "jest --testPathPattern=integration",
     "test:e2e": "playwright test",
     "test:coverage": "jest --coverage",
-    "test:ci": "jest --ci --coverage --watchAll=false"
+    "test:ci": "jest --ci --coverage --watchAll=false",
+    "security:audit": "npm audit --audit-level moderate",
+    "security:fix": "npm audit fix",
+    "deps:update": "npm update",
+    "deps:check": "npm outdated"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
@@ -100,7 +104,8 @@
       }]
     },
     "moduleNameMapper": {
-      "^(\\.{1,2}/.*)\\.js$": "$1"
+      "^(\\.{1,2}/.*)\\.js$": "$1",
+      "^open$": "<rootDir>/tests/__mocks__/open.ts"
     },
     "setupFilesAfterEnv": ["<rootDir>/tests/setup.ts"],
     "collectCoverageFrom": [

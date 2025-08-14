@@ -44,7 +44,7 @@ class LockfileManager {
       // Create new lockfile
       const lockData: LockfileData = {
         pid: process.pid,
-        port: CONFIG.OAUTH_CALLBACK_PORT,
+        port: CONFIG.OAUTH_CALLBACK_PORT || 0, // 0 means auto-select
         timestamp: Date.now(),
         hostname: os.hostname(),
       };

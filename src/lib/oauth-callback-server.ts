@@ -143,7 +143,7 @@ const AUTHORIZATION_CODE_HTML = `
                 displayDetails(error.message + '. Please try again.');
             });
         } 
-        // Check for access token in URL fragment (implicit flow - WordPress.com)
+        // Check for access token in URL fragment (implicit flow)
         else if (hashParams.has('access_token')) {
             const tokens = {
                 access_token: hashParams.get('access_token'),
@@ -165,7 +165,7 @@ const AUTHORIZATION_CODE_HTML = `
             .then(response => {
                 if (response.ok) {
                     displayStatus('✅ Authorization successful!', 'success');
-                    displayDetails('WordPress.com OAuth authentication completed. You can now close this window.');
+                    displayDetails('OAuth authentication completed. You can now close this window.');
                     // Auto-close after 3 seconds
                     setTimeout(() => {
                         displayDetails('Closing window...');

@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger, LogLevel } from './utils.js';
-import { CONFIG, validateConfig, isWordPressComSite, getRecommendedOAuthConfig } from './config.js';
+import { CONFIG, validateConfig, getDefaultOAuthScopes } from './config.js';
 import { WPTokens, AuthError, APIError } from './oauth-types.js';
 import {
   getValidTokens,
@@ -55,15 +55,9 @@ function constructApiUrl(baseUrl: string, defaultEndpoint: string): string {
     const urlObj = new URL(cleanUrl);
     const hasCustomPath = urlObj.pathname && urlObj.pathname !== '/' && urlObj.pathname.length > 0;
     
-    // Check if this is WordPress.com public API
-    const isWordPressComPublicApi = urlObj.hostname === 'public-api.wordpress.com';
-    
     if (hasCustomPath) {
       // URL has a custom path - use it exactly as provided
       return cleanUrl;
-    } else if (isWordPressComPublicApi) {
-      // WordPress.com public API uses direct path routing, not REST route params
-      return new URL(defaultEndpoint, cleanUrl).toString();
     } else {
       // Standard WordPress installation - use REST route format with default endpoint
       return new URL(`/?rest_route=${defaultEndpoint}`, cleanUrl).toString();
@@ -98,33 +92,17 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
     }
 
     logger.auth('No existing valid tokens found in persistent storage');
-
-    // Detect site type and recommend appropriate OAuth flow
-    const isWPCom = isWordPressComSite(serverUrl);
-    const recommendedConfig = getRecommendedOAuthConfig(serverUrl);
-
-    if (isWPCom) {
-      logger.auth(`Detected WordPress.com site - using ${recommendedConfig.description}`);
-      logger.auth('This will use WordPress.com OAuth2 endpoints for compatibility');
-    } else {
-      logger.auth(`Detected self-hosted WordPress site - using ${recommendedConfig.description}`);
-      logger.auth('This will trigger the MCP-compliant OAuth 2.1 authentication flow');
-    }
-
+    logger.auth('Starting MCP-compliant OAuth 2.1 authentication flow');
     logger.auth('Your browser should open automatically for authentication');
 
-    // Use MCP OAuth 2.1 for self-hosted sites, WordPress.com OAuth2 for hosted sites
-    const shouldUseMCPFlow =
-      !isWPCom && CONFIG.OAUTH_FLOW_TYPE === 'authorization_code' && CONFIG.OAUTH_USE_PKCE;
-
-    if (shouldUseMCPFlow) {
+    // Use MCP OAuth 2.1 provider for all sites
+    if (CONFIG.OAUTH_FLOW_TYPE === 'authorization_code' && CONFIG.OAUTH_USE_PKCE) {
       // Use MCP-compliant OAuth 2.1 provider
       if (!mcpOAuthProvider) {
-        const recommendedConfig = getRecommendedOAuthConfig(serverUrl);
         mcpOAuthProvider = new MCPOAuthProvider({
           serverUrl,
           clientId: CONFIG.WP_OAUTH_CLIENT_ID,
-          scopes: recommendedConfig.scopes,
+          scopes: getDefaultOAuthScopes(),
         });
       }
 
@@ -140,15 +118,11 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
         return null;
       }
     } else {
-      // Use WordPress.com compatible OAuth provider
-      if (isWPCom) {
-        logger.auth('Using WordPress.com OAuth2 provider for full compatibility');
-      } else {
-        logger.warn(
-          'Using legacy OAuth provider. Consider upgrading to OAuth 2.1 for MCP compliance',
-          'AUTH'
-        );
-      }
+      // Use legacy OAuth provider
+      logger.warn(
+        'Using legacy OAuth provider. Consider enabling PKCE for MCP compliance',
+        'AUTH'
+      );
 
       // Initialize coordinator for legacy flow
       if (!authCoordinator) {
@@ -159,7 +133,7 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
         authCoordinator = createLazyWPAuthCoordinator(
           serverUrlHash,
           serverUrl,
-          CONFIG.OAUTH_CALLBACK_PORT,
+          CONFIG.OAUTH_CALLBACK_PORT || 7665,
           globalEvents
         );
       }
@@ -191,7 +165,7 @@ export async function wpRequest(
   // Validate environment variables first
   validateEnvironment();
 
-  const endpoint = '/wpcom/v2/mcp/v1'; // WordPress.com MCP endpoint
+  const endpoint = '/wp/v2/wpmcp'; // WordPress MCP endpoint
   const method = 'POST';
 
   // Log the request parameters for debugging

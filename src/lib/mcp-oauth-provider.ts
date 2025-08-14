@@ -41,7 +41,7 @@ import {
 } from './mcp-oauth-utils.js';
 import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
 import { logger } from './utils.js';
-import { CONFIG, getRecommendedOAuthConfig } from './config.js';
+import { CONFIG, getDefaultOAuthScopes, getOAuthCallbackPort } from './config.js';
 
 /**
  * MCP-compliant OAuth 2.1 Provider for WordPress
@@ -63,7 +63,7 @@ export class MCPOAuthProvider {
 
   constructor(options: Partial<MCPOAuthConfig>) {
     const serverUrl = options.serverUrl || CONFIG.WP_API_URL;
-    const recommendedConfig = getRecommendedOAuthConfig(serverUrl);
+    const defaultScopes = getDefaultOAuthScopes();
     
     // Build MCP-compliant configuration
     this.config = {
@@ -71,10 +71,10 @@ export class MCPOAuthProvider {
       resource: generateCanonicalResourceURI(serverUrl),
       responseType: 'code', // OAuth 2.1 uses authorization code flow
       usePKCE: true, // PKCE is required for OAuth 2.1
-      redirectUri: `http://${CONFIG.OAUTH_HOST}:${CONFIG.OAUTH_CALLBACK_PORT}/oauth/callback`,
-      scopes: options.scopes || recommendedConfig.scopes,
+      redirectUri: `http://${CONFIG.OAUTH_HOST}:${CONFIG.OAUTH_CALLBACK_PORT || 0}/oauth/callback`,
+      scopes: options.scopes || defaultScopes,
       clientId: options.clientId || CONFIG.WP_OAUTH_CLIENT_ID,
-      callbackPort: CONFIG.OAUTH_CALLBACK_PORT,
+      callbackPort: CONFIG.OAUTH_CALLBACK_PORT || 0, // 0 = auto-select
       host: CONFIG.OAUTH_HOST,
       timeout: CONFIG.OAUTH_TIMEOUT,
       ...options,
@@ -325,10 +325,14 @@ export class MCPOAuthProvider {
       await writeTextFile(this.serverUrlHash, 'pkce_verifier.txt', this.currentPKCE.codeVerifier);
       await writeTextFile(this.serverUrlHash, 'oauth_state.txt', this.currentState);
 
-      // Step 4: Set up callback server
+      // Step 4: Set up callback server with smart port selection
+      const callbackPort = this.config.callbackPort === 0 
+        ? await getOAuthCallbackPort() 
+        : this.config.callbackPort;
+        
       const callbackServer = setupWPOAuthCallbackServer(
         {
-          port: this.config.callbackPort,
+          port: callbackPort,
           host: this.config.host,
           serverUrlHash: this.serverUrlHash,
           timeout: this.config.timeout,
@@ -339,11 +343,14 @@ export class MCPOAuthProvider {
       await callbackServer.start();
       logger.oauth('OAuth callback server started');
 
+      // Update redirect URI with the actual port used
+      const actualRedirectUri = `http://${this.config.host}:${callbackPort}/oauth/callback`;
+
       // Step 5: Build authorization URL with all required parameters
       const authUrl = buildAuthorizationUrl(
         this.config.authorizationEndpoint!,
         this.config.clientId!,
-        this.config.redirectUri,
+        actualRedirectUri,
         this.config.scopes,
         this.currentState,
         this.currentPKCE.codeChallenge,

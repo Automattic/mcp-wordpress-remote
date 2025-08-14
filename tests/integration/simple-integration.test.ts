@@ -15,7 +15,7 @@ describe('Core Integration Tests', () => {
     tempDir = await createTempDir();
     
     restoreEnv = mockEnv({
-      WP_API_URL: 'https://test-site.wordpress.com',
+      WP_API_URL: 'https://test-site.com',
       WP_OAUTH_CLIENT_ID: 'test_client_id',
       WP_OAUTH_CLIENT_SECRET: 'test_client_secret',
       OAUTH_ENABLED: 'true',
@@ -42,22 +42,15 @@ describe('Core Integration Tests', () => {
       const result = validateConfig();
       
       expect(result.isValid).toBe(true);
-      expect(CONFIG.WP_API_URL).toBe('https://test-site.wordpress.com');
+      expect(CONFIG.WP_API_URL).toBe('https://test-site.com');
       expect(CONFIG.OAUTH_ENABLED).toBe(true);
     });
 
-    it('should recommend correct OAuth config based on site type', async () => {
-      const { getRecommendedOAuthConfig, isWordPressComSite } = await import('../../src/lib/config.js');
+    it('should provide default OAuth scopes', async () => {
+      const { getDefaultOAuthScopes } = await import('../../src/lib/config.js');
       
-      // Test WordPress.com site
-      const wpcomConfig = getRecommendedOAuthConfig('https://example.wordpress.com');
-      expect(wpcomConfig.flowType).toBe('implicit');
-      expect(wpcomConfig.authorizationEndpoint).toBe('https://public-api.wordpress.com/oauth2/authorize');
-      
-      // Test self-hosted site
-      const selfHostedConfig = getRecommendedOAuthConfig('https://example.com');
-      expect(selfHostedConfig.flowType).toBe('authorization_code');
-      expect(selfHostedConfig.usePKCE).toBe(true);
+      const scopes = getDefaultOAuthScopes();
+      expect(scopes).toEqual(['read', 'write']);
     });
   });
 
