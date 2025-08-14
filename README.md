@@ -62,7 +62,7 @@ You need to install the [wordpress-mcp](https://github.com/Automattic/wordpress-
 
 ### 1. OAuth 2.1 (Recommended - MCP Compliant)
 
-OAuth 2.1 provides the most secure and user-friendly experience with full MCP Authorization specification compliance for **self-hosted WordPress sites**.
+OAuth 2.1 provides the most secure and user-friendly experience with full MCP Authorization specification compliance.
 
 #### **For Self-Hosted WordPress Sites:**
 
@@ -74,32 +74,14 @@ OAuth 2.1 provides the most secure and user-friendly experience with full MCP Au
       "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
         "WP_API_URL": "https://your-wordpress-site.com",
-        "OAUTH_ENABLED": "true",
-        "OAUTH_FLOW_TYPE": "authorization_code",
-        "OAUTH_USE_PKCE": "true"
+        "OAUTH_ENABLED": "true"
       }
     }
   }
 }
 ```
 
-#### **For WordPress.com Sites (Automatic Compatibility):**
 
-```json
-{
-  "mcpServers": {
-    "wordpress": {
-      "command": "npx",
-      "args": ["-y", "@automattic/mcp-wordpress-remote"],
-      "env": {
-        "WP_API_URL": "https://yoursite.wordpress.com"
-      }
-    }
-  }
-}
-```
-
-_The system automatically detects WordPress.com sites and uses compatible OAuth2 endpoints._
 
 **MCP Authorization Specification Features:**
 
@@ -178,7 +160,7 @@ To create an application password:
       "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
         "WP_API_URL": "https://your-wordpress-site.com",
-        "OAUTH_CALLBACK_PORT": "8080",
+        "OAUTH_CALLBACK_PORT": "7665",
         "OAUTH_HOST": "127.0.0.1",
         "WP_OAUTH_CLIENT_ID": "your-custom-client-id"
       }
@@ -213,11 +195,15 @@ For WooCommerce-specific tools and reports:
 | ---------------------------- | ---------------------------------- | -------------------- | -------- |
 | `WP_API_URL`                 | WordPress site URL                 | -                    | ✅       |
 | `OAUTH_ENABLED`              | Enable OAuth authentication        | `true`               | -        |
-| `OAUTH_CALLBACK_PORT`        | OAuth callback port                | `3000`               | -        |
+| `OAUTH_CALLBACK_PORT`        | OAuth callback port                | `7665`               | -        |
 | `OAUTH_HOST`                 | OAuth callback hostname            | `127.0.0.1`          | -        |
 | `WP_OAUTH_CLIENT_ID`         | Custom OAuth client ID             | -                    | -        |
+| **OAuth Endpoints**          |                                    |                      |          |
+| `OAUTH_AUTHORIZE_ENDPOINT`   | OAuth authorization endpoint       | -                    | ✅ (for custom OAuth) |
+| `OAUTH_TOKEN_ENDPOINT`       | OAuth token endpoint               | -                    | ✅ (for custom OAuth) |
+| `OAUTH_AUTHENTICATE_ENDPOINT`| OAuth authenticate endpoint       | -                    | -        |
 | **MCP OAuth 2.1 Settings**   |                                    |                      |          |
-| `OAUTH_FLOW_TYPE`            | OAuth flow type                    | `authorization_code` | -        |
+| `OAUTH_FLOW_TYPE`            | OAuth flow type (authorization_code or implicit) | `authorization_code` | -        |
 | `OAUTH_USE_PKCE`             | Use PKCE (required for OAuth 2.1)  | `true`               | -        |
 | `OAUTH_DYNAMIC_REGISTRATION` | Enable dynamic client registration | `true`               | -        |
 | `OAUTH_RESOURCE_INDICATOR`   | Use resource indicators (RFC 8707) | `true`               | -        |
@@ -232,33 +218,7 @@ For WooCommerce-specific tools and reports:
 | `WOO_CUSTOMER_KEY`           | WooCommerce consumer key           | -                    | -        |
 | `WOO_CUSTOMER_SECRET`        | WooCommerce consumer secret        | -                    | -        |
 
-### WordPress.com Compatibility
 
-The package automatically detects WordPress.com sites and uses the appropriate OAuth2 flow for full compatibility with the [WordPress.com OAuth2 API](https://developer.wordpress.com/docs/oauth2/).
-
-#### **Automatic Detection**
-
-WordPress.com sites (\*.wordpress.com) are automatically detected and configured with:
-
-- **Standard OAuth2 implicit flow** (as per WordPress.com documentation)
-- **WordPress.com OAuth endpoints**: `public-api.wordpress.com/oauth2/*`
-- **Bearer token authentication** format
-- **No PKCE requirement** (WordPress.com compatible)
-
-#### **Manual WordPress.com Configuration**
-
-For explicit WordPress.com mode:
-
-```json
-{
-  "env": {
-    "WP_API_URL": "https://yoursite.wordpress.com",
-    "OAUTH_FLOW_TYPE": "implicit",
-    "OAUTH_USE_PKCE": "false",
-    "OAUTH_RESOURCE_INDICATOR": "false"
-  }
-}
-```
 
 ### Disable OAuth
 

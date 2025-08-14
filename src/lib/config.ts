@@ -1,5 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
+import { selectCallbackPort } from './port-utils';
 
 /**
  * Centralized configuration for MCP WordPress Remote
@@ -11,21 +12,27 @@ export const CONFIG = {
 
   // OAuth Configuration (MCP Authorization specification 2025-06-18 compliant)
   OAUTH_ENABLED: process.env.OAUTH_ENABLED === 'true', // Disabled by default, enable with 'true'
-  OAUTH_CALLBACK_PORT: parseInt(process.env.OAUTH_CALLBACK_PORT || '3000'),
+  OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT ? parseInt(process.env.OAUTH_CALLBACK_PORT) : undefined,
   OAUTH_HOST: process.env.OAUTH_HOST || '127.0.0.1',
   WP_OAUTH_CLIENT_ID: process.env.WP_OAUTH_CLIENT_ID || '', // No default - site-specific
 
-  // OAuth flow type settings
-  // 'authorization_code' (recommended): MCP-compliant OAuth 2.1 with PKCE
-  // 'implicit' (legacy): Supported for WordPress.com and legacy implementations
-  OAUTH_FLOW_TYPE: (process.env.OAUTH_FLOW_TYPE || 'authorization_code') as
-    | 'authorization_code'
-    | 'implicit',
+  // OAuth flow type - authorization_code (recommended) or implicit (legacy)  
+  OAUTH_FLOW_TYPE: (process.env.OAUTH_FLOW_TYPE || 'authorization_code') as 'authorization_code' | 'implicit',
   OAUTH_USE_PKCE: process.env.OAUTH_USE_PKCE !== 'false', // PKCE required for OAuth 2.1
   OAUTH_DYNAMIC_REGISTRATION: process.env.OAUTH_DYNAMIC_REGISTRATION !== 'false', // Dynamic client registration
 
+  // Explicit OAuth Endpoints (required for custom configurations)
+  OAUTH_AUTHORIZE_ENDPOINT: process.env.OAUTH_AUTHORIZE_ENDPOINT || '', // Custom OAuth authorization endpoint
+  OAUTH_TOKEN_ENDPOINT: process.env.OAUTH_TOKEN_ENDPOINT || '', // Custom OAuth token endpoint
+  OAUTH_AUTHENTICATE_ENDPOINT: process.env.OAUTH_AUTHENTICATE_ENDPOINT || '', // Custom OAuth authenticate endpoint
+
   // Resource Indicators (RFC 8707)
   OAUTH_RESOURCE_INDICATOR: process.env.OAUTH_RESOURCE_INDICATOR !== 'false', // Resource parameter support
+
+  // OAuth Scopes Configuration
+  // OAUTH_SCOPES: Comma-separated list of OAuth scopes (e.g., "read,write")
+  // If empty, uses defaults: "read,write"
+  OAUTH_SCOPES: process.env.OAUTH_SCOPES || '',
 
   // Timeout Configuration (in milliseconds)
   OAUTH_TIMEOUT: 30000, // 30 seconds
@@ -58,7 +65,7 @@ export const getConfig = () => ({
   /** Whether OAuth authentication is enabled */
   oauthEnabled: CONFIG.OAUTH_ENABLED,
 
-  /** Port for OAuth callback server */
+  /** Port for OAuth callback server (undefined for auto-detection on self-hosted sites) */
   oauthCallbackPort: CONFIG.OAUTH_CALLBACK_PORT,
 
   /** Hostname for OAuth callback */
@@ -67,7 +74,7 @@ export const getConfig = () => ({
   /** WordPress OAuth client ID */
   wpOAuthClientId: CONFIG.WP_OAUTH_CLIENT_ID,
 
-  /** OAuth flow type (authorization_code recommended, implicit supported for legacy) */
+  /** OAuth flow type (authorization_code recommended, implicit for legacy) */
   oauthFlowType: CONFIG.OAUTH_FLOW_TYPE,
 
   /** Whether to use PKCE (required for OAuth 2.1) */
@@ -78,6 +85,9 @@ export const getConfig = () => ({
 
   /** Whether to use resource indicators (RFC 8707) */
   oauthResourceIndicator: CONFIG.OAUTH_RESOURCE_INDICATOR,
+
+  /** Custom OAuth scopes (comma-separated) */
+  oauthScopes: CONFIG.OAUTH_SCOPES,
 
   /** OAuth operation timeout in milliseconds */
   oauthTimeout: CONFIG.OAUTH_TIMEOUT,
@@ -111,49 +121,25 @@ export const getConfig = () => ({
 });
 
 /**
- * Check if the site is a WordPress.com hosted site
+ * Parse OAuth scopes from environment variable or return default scopes
  */
-export function isWordPressComSite(url: string): boolean {
-  try {
-    const siteUrl = new URL(url);
-    const hostname = siteUrl.hostname.toLowerCase();
-
-    // WordPress.com hosted sites
-    return (
-      hostname.endsWith('.wordpress.com') ||
-      hostname === 'wordpress.com' ||
-      // Jetpack sites often use WordPress.com OAuth
-      hostname.endsWith('.wpcomstaging.com') ||
-      hostname.endsWith('.wpcomstaging.net')
-    );
-  } catch {
-    return false;
+export function parseOAuthScopes(envScopes: string, defaultScopes: string[]): string[] {
+  if (!envScopes || envScopes.trim() === '') {
+    return defaultScopes;
   }
+  
+  return envScopes
+    .split(',')
+    .map(scope => scope.trim())
+    .filter(scope => scope.length > 0);
 }
 
 /**
- * Get recommended OAuth configuration based on site type
+ * Get default OAuth scopes
  */
-export function getRecommendedOAuthConfig(siteUrl: string) {
-  if (isWordPressComSite(siteUrl)) {
-    return {
-      flowType: 'implicit' as const,
-      usePKCE: false,
-      useResourceIndicator: false,
-      authorizationEndpoint: 'https://public-api.wordpress.com/oauth2/authorize',
-      tokenEndpoint: 'https://public-api.wordpress.com/oauth2/token',
-      description: 'WordPress.com OAuth2 (compatible mode)',
-    };
-  } else {
-    return {
-      flowType: 'authorization_code' as const,
-      usePKCE: true,
-      useResourceIndicator: true,
-      authorizationEndpoint: undefined, // Will be discovered
-      tokenEndpoint: undefined, // Will be discovered
-      description: 'MCP-compliant OAuth 2.1',
-    };
-  }
+export function getDefaultOAuthScopes(): string[] {
+  const defaultScopes = ['read', 'write'];
+  return parseOAuthScopes(CONFIG.OAUTH_SCOPES, defaultScopes);
 }
 
 /**
@@ -180,21 +166,17 @@ export function validateConfig(): { isValid: boolean; errors: string[] } {
 
   // Validate OAuth configuration if OAuth is enabled
   if (CONFIG.OAUTH_ENABLED) {
+    // Validate port if specified
     if (
-      isNaN(CONFIG.OAUTH_CALLBACK_PORT) ||
+      CONFIG.OAUTH_CALLBACK_PORT !== undefined &&
+      (isNaN(CONFIG.OAUTH_CALLBACK_PORT) ||
       CONFIG.OAUTH_CALLBACK_PORT < 1 ||
-      CONFIG.OAUTH_CALLBACK_PORT > 65535
+      CONFIG.OAUTH_CALLBACK_PORT > 65535)
     ) {
-      errors.push('OAUTH_CALLBACK_PORT must be a valid port number (1-65535)');
+      errors.push('OAUTH_CALLBACK_PORT must be a valid port number (1-65535) if specified');
     }
 
-    // MCP Authorization specification compliance checks
-    if (CONFIG.OAUTH_FLOW_TYPE === 'implicit') {
-      // Note: Implicit flow is supported but not recommended for new implementations
-      // MCP Authorization specification 2025-06-18 recommends OAuth 2.1 with authorization_code flow
-      console.warn('⚠️  Using deprecated implicit OAuth flow. Consider migrating to authorization_code flow for better security.');
-    }
-
+    // PKCE is required for OAuth 2.1 authorization_code flow
     if (CONFIG.OAUTH_FLOW_TYPE === 'authorization_code' && !CONFIG.OAUTH_USE_PKCE) {
       errors.push(
         'PKCE is required for OAuth 2.1 authorization_code flow (MCP Authorization specification 2025-06-18)'
@@ -204,6 +186,68 @@ export function validateConfig(): { isValid: boolean; errors: string[] } {
 
   return {
     isValid: errors.length === 0,
-    errors,
+    errors: errors.map(formatConfigError),
+  };
+}
+
+/**
+ * Get the OAuth callback port with smart selection
+ * Uses configured port or auto-detects available port
+ */
+export async function getOAuthCallbackPort(): Promise<number> {
+  return selectCallbackPort(
+    CONFIG.WP_API_URL,
+    CONFIG.OAUTH_CALLBACK_PORT,
+    false // Always treat as self-hosted for port selection
+  );
+}
+
+/**
+ * Enhance error messages with helpful debugging information
+ */
+function formatConfigError(error: string): string {
+  // Add helpful context to common configuration errors
+  if (error.includes('WP_API_URL must be set')) {
+    return `${error}. Example: WP_API_URL=https://yoursite.com`;
+  }
+  
+  if (error.includes('No authentication method configured')) {
+    return `${error}. Configure one of these options:
+    • JWT_TOKEN=your_jwt_token (preferred for APIs)
+    • WP_API_USERNAME=username and WP_API_PASSWORD=app_password (for application passwords)
+    • Set OAUTH_ENABLED=true and WP_OAUTH_CLIENT_ID=your_client_id (for OAuth 2.1)`;
+  }
+  
+  if (error.includes('OAUTH_CALLBACK_PORT')) {
+    return `${error}. The port must be available for the OAuth callback server. Try a different port like 7777, 7890, or other ports in the safe 7000-7999 range.`;
+  }
+  
+  if (error.includes('PKCE is required')) {
+    return `${error}. Set OAUTH_USE_PKCE=true (this is required for secure OAuth 2.1 authentication).`;
+  }
+  
+  if (error.includes('WP_OAUTH_CLIENT_ID')) {
+    return `${error}. You need to register your application with WordPress first. Check if the WordPress MCP plugin is installed and activated.`;
+  }
+  
+  return error;
+}
+
+/**
+ * Simple health check for configuration performance
+ */
+export function getConfigHealthStatus(): {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  uptime: number;
+  version: string;
+  timestamp: string;
+} {
+  const validation = validateConfig();
+  
+  return {
+    status: validation.isValid ? 'healthy' : 'unhealthy',
+    uptime: process.uptime(),
+    version: '0.2.9',
+    timestamp: new Date().toISOString(),
   };
 }

@@ -12,11 +12,11 @@ test.describe('OAuth Authentication Flow', () => {
     });
   });
 
-  test('should complete WordPress.com OAuth flow', async ({ page }) => {
+  test('should complete hosted WordPress OAuth flow', async ({ page }) => {
     // Start the OAuth flow by navigating to the authorization URL
     await page.goto('/auth/start');
 
-    // Should redirect to WordPress.com authorization page
+    // Should redirect to hosted WordPress authorization page
     await expect(page).toHaveURL(/public-api\.wordpress\.com\/oauth2\/authorize/);
 
     // Check that required OAuth parameters are present
@@ -32,7 +32,7 @@ test.describe('OAuth Authentication Flow', () => {
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
 
     // In a real test, we would:
-    // 1. Mock the WordPress.com login page
+    // 1. Mock the hosted WordPress login page
     // 2. Fill in test credentials
     // 3. Submit the form
     // 4. Handle the redirect back to our callback

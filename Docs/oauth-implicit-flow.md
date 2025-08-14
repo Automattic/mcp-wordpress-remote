@@ -1,15 +1,13 @@
 # OAuth Implicit Flow Support
 
-This document explains how to use the OAuth implicit flow with the MCP WordPress Remote server. While the implicit flow is considered legacy and less secure than the authorization code flow, it's still supported for compatibility with certain WordPress sites and legacy implementations.
+This document explains how to use the OAuth implicit flow with the MCP WordPress Remote server. The implicit flow is primarily required for legacy OAuth implementations or client-side applications.
 
 ## When to Use Implicit Flow
 
-The implicit flow is appropriate in these scenarios:
+The implicit flow is required in these scenarios:
 
-1. **WordPress.com hosted sites** - WordPress.com's OAuth implementation works best with implicit flow
-2. **Legacy WordPress OAuth plugins** - Some older OAuth plugins only support implicit flow
-3. **Client-side applications** - When you can't securely store a client secret
-4. **Testing and development** - When you need a simpler OAuth setup for testing
+1. **Legacy WordPress OAuth plugins** - Some older OAuth plugins only support implicit flow
+2. **Client-side applications** - When you can't securely store a client secret
 
 ## Security Considerations
 
@@ -20,7 +18,7 @@ The implicit flow is appropriate in these scenarios:
 - Tokens cannot be securely validated
 - More vulnerable to token theft
 
-For production applications with self-hosted WordPress sites, we recommend using the authorization code flow with PKCE instead.
+For self-hosted WordPress sites, we recommend using the authorization code flow with PKCE instead.
 
 ## Configuration
 
@@ -37,44 +35,42 @@ OAUTH_FLOW_TYPE=implicit
 OAUTH_USE_PKCE=false
 
 # Your WordPress site URL
-WP_API_URL=https://yoursite.wordpress.com
+WP_API_URL=https://your-wordpress-site.com
 
 # OAuth client ID from your WordPress site
 WP_OAUTH_CLIENT_ID=your_client_id
 
 # Callback server settings
-OAUTH_CALLBACK_PORT=3000
+OAUTH_CALLBACK_PORT=7665
 OAUTH_HOST=127.0.0.1
 ```
 
-## WordPress.com Setup
+## Legacy OAuth Plugin Setup
 
-For WordPress.com sites, the system automatically detects and recommends implicit flow:
+For WordPress sites using legacy OAuth plugins that only support implicit flow:
 
-1. **Register your application** at https://developer.wordpress.com/apps/
-2. **Set the redirect URI** to `http://127.0.0.1:3000/oauth/callback`
-3. **Copy the Client ID** to your `WP_OAUTH_CLIENT_ID` environment variable
-4. **Set the flow type** to implicit (or let it auto-detect)
+1. **Install a compatible OAuth plugin** (e.g., WP OAuth Server)
+2. **Create a client application** in the plugin settings
+3. **Set the redirect URI** to `http://127.0.0.1:7665/oauth/callback`
+4. **Copy the Client ID** to your `WP_OAUTH_CLIENT_ID` environment variable
+5. **Configure the plugin** to support implicit flow
 
-Example configuration for WordPress.com:
+Example configuration:
 
 ```bash
 OAUTH_ENABLED=true
 OAUTH_FLOW_TYPE=implicit
-WP_API_URL=https://yoursite.wordpress.com
+WP_API_URL=https://your-wordpress-site.com
 WP_OAUTH_CLIENT_ID=12345
-OAUTH_CALLBACK_PORT=3000
+OAUTH_CALLBACK_PORT=7665
 ```
 
-## Self-Hosted WordPress Setup
+## Additional Configuration
 
-For self-hosted WordPress sites using plugins that only support implicit flow:
+For additional OAuth plugin configurations, you may need to adjust the callback port:
 
-1. **Install an OAuth plugin** like WP OAuth Server or similar
-2. **Configure the plugin** to support implicit flow
-3. **Create a client application** in the plugin settings
-4. **Set the redirect URI** to `http://127.0.0.1:3000/oauth/callback`
-5. **Configure the environment variables** as shown above
+1. **Set the redirect URI** to match your callback port configuration
+2. **Configure the environment variables** as shown above
 
 ## How It Works
 

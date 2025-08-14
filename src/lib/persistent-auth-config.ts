@@ -282,29 +282,40 @@ export async function writeClientInfo(
 }
 
 /**
- * Check if tokens are valid (not expired)
+ * Check if tokens are valid (not expired) - optimized for performance
  */
 export function isTokenValid(tokens: WPTokens): TokenValidationResult {
-  if (!tokens || !tokens.access_token) {
+  // Quick validation - check basic requirements first
+  if (!tokens?.access_token) {
     return { isValid: false, error: 'No access token' };
   }
 
-  // If no expiration info, assume valid
+  // If no expiration info, assume valid (avoid unnecessary calculations)
   if (!tokens.expires_in || !tokens.obtained_at) {
     return { isValid: true };
   }
 
+  // Optimized expiration check - avoid Math.floor until needed
   const now = Date.now();
-  const expiresAt = tokens.obtained_at + tokens.expires_in * 1000;
-  const expiresIn = Math.floor((expiresAt - now) / 1000);
+  const expiryTime = tokens.obtained_at + (tokens.expires_in * 1000);
+  
+  // Quick check with 60-second buffer for token refresh
+  const isExpiringSoon = now >= (expiryTime - 60000);
+  
+  if (isExpiringSoon) {
+    const expiresIn = Math.max(0, Math.floor((expiryTime - now) / 1000));
+    return {
+      isValid: false,
+      expiresIn,
+      error: 'Token expired',
+    };
+  }
 
-  // Add 60 second buffer for token refresh
-  const isValid = expiresIn > 60;
-
-  return {
-    isValid,
-    expiresIn: Math.max(0, expiresIn),
-    error: isValid ? undefined : 'Token expired',
+  // Token is valid with plenty of time left
+  const expiresIn = Math.floor((expiryTime - now) / 1000);
+  return { 
+    isValid: true,
+    expiresIn: Math.max(0, expiresIn)
   };
 }
 

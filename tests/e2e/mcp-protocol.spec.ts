@@ -248,13 +248,13 @@ test.describe('MCP Protocol Integration', () => {
   });
 
   test('should work with different WordPress site types', async ({ page }) => {
-    // Test with WordPress.com site
+    // Test with hosted WordPress site
     await page.addInitScript(() => {
-      (globalThis as any).localStorage.setItem('wp_site_type', 'wordpress_com');
+      (globalThis as any).localStorage.setItem('wp_site_type', 'hosted_wordpress');
     });
 
     await page.goto('/mcp/tools/list');
-    const wpcomTools = await page.locator('pre').textContent();
+    const hostedTools = await page.locator('pre').textContent();
 
     // Test with self-hosted site
     await page.addInitScript(() => {
@@ -265,7 +265,7 @@ test.describe('MCP Protocol Integration', () => {
     const selfHostedTools = await page.locator('pre').textContent();
 
     // Both should return valid tool lists, but may differ
-    expect(() => JSON.parse(wpcomTools || '{}')).not.toThrow();
+    expect(() => JSON.parse(hostedTools || '{}')).not.toThrow();
     expect(() => JSON.parse(selfHostedTools || '{}')).not.toThrow();
   });
 });

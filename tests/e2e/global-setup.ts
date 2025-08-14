@@ -12,10 +12,10 @@ async function globalSetup(config: FullConfig) {
   const tempDir = await createTempDir('e2e-test-');
 
   // Set up test environment variables
-  process.env.WP_API_URL = 'https://test-site.wordpress.com';
+  process.env.WP_API_URL = 'https://test-site.com';
   process.env.WP_OAUTH_CLIENT_ID = 'e2e_test_client_id';
   process.env.WP_OAUTH_CLIENT_SECRET = 'e2e_test_client_secret';
-  process.env.OAUTH_CALLBACK_PORT = '3000';
+  process.env.OAUTH_CALLBACK_PORT = '7665';
   process.env.OAUTH_HOST = '127.0.0.1';
   process.env.WP_MCP_CONFIG_DIR = tempDir;
   process.env.NODE_ENV = 'test';

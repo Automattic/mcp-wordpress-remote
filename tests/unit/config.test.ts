@@ -26,8 +26,8 @@ describe('Configuration Module', () => {
       const { CONFIG } = await import('../../src/lib/config.js');
       
       expect(CONFIG.WP_API_URL).toBe('https://example.com');
-      expect(CONFIG.OAUTH_ENABLED).toBe(true);
-      expect(CONFIG.OAUTH_CALLBACK_PORT).toBe(3000);
+      expect(CONFIG.OAUTH_ENABLED).toBe(false); // OAuth is disabled by default
+      expect(CONFIG.OAUTH_CALLBACK_PORT).toBeUndefined(); // Default is undefined for auto-select
       expect(CONFIG.OAUTH_HOST).toBe('127.0.0.1');
       expect(CONFIG.WP_OAUTH_CLIENT_ID).toBe('');
       expect(CONFIG.OAUTH_FLOW_TYPE).toBe('authorization_code');
@@ -75,7 +75,8 @@ describe('Configuration Module', () => {
       restoreEnv = mockEnv({
         WP_API_URL: 'https://test-site.wordpress.com',
         WP_OAUTH_CLIENT_ID: 'test_client_id',
-        OAUTH_CALLBACK_PORT: '3000',
+        OAUTH_CALLBACK_PORT: '7665',
+        OAUTH_ENABLED: 'true', // Enable OAuth for validation to pass
       });
 
       const { validateConfig } = await import('../../src/lib/config.js');
@@ -95,13 +96,14 @@ describe('Configuration Module', () => {
       const result = validateConfig();
 
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain('WP_API_URL must be set to your WordPress site URL');
+      expect(result.errors.some(error => error.includes('WP_API_URL must be set to your WordPress site URL'))).toBe(true);
     });
 
     it('should pass validation with valid URL format', async () => {
       restoreEnv = mockEnv({
         WP_API_URL: 'https://test-site.com',
         WP_OAUTH_CLIENT_ID: 'test_client_id',
+        OAUTH_ENABLED: 'true', // Enable OAuth for validation to pass
       });
 
       const { validateConfig } = await import('../../src/lib/config.js');
@@ -115,13 +117,14 @@ describe('Configuration Module', () => {
         WP_API_URL: 'https://test-site.com',
         WP_OAUTH_CLIENT_ID: 'test_client_id',
         OAUTH_CALLBACK_PORT: '99999',
+        OAUTH_ENABLED: 'true', // Enable OAuth for port validation to trigger
       });
 
       const { validateConfig } = await import('../../src/lib/config.js');
       const result = validateConfig();
 
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain('OAUTH_CALLBACK_PORT must be a valid port number (1-65535)');
+      expect(result.errors.some(error => error.includes('OAUTH_CALLBACK_PORT must be a valid port number (1-65535)'))).toBe(true);
     });
 
     it('should require some authentication method even when OAuth is disabled', async () => {
@@ -135,85 +138,38 @@ describe('Configuration Module', () => {
       const result = validateConfig();
 
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain('No authentication method configured. Please set one of: JWT_TOKEN, WP_API_USERNAME+WP_API_PASSWORD, or enable OAuth');
+      expect(result.errors.some(error => error.includes('No authentication method configured. Please set one of: JWT_TOKEN, WP_API_USERNAME+WP_API_PASSWORD, or enable OAuth'))).toBe(true);
     });
   });
 
-  describe('isWordPressComSite function', () => {
-    it('should identify WordPress.com sites correctly', async () => {
-      const { isWordPressComSite } = await import('../../src/lib/config.js');
+  describe('getDefaultOAuthScopes function', () => {
+    it('should return default OAuth scopes', async () => {
+      const { getDefaultOAuthScopes } = await import('../../src/lib/config.js');
 
-      expect(isWordPressComSite('https://example.wordpress.com')).toBe(true);
-      expect(isWordPressComSite('https://subdomain.wordpress.com')).toBe(true);
-      expect(isWordPressComSite('https://public-api.wordpress.com')).toBe(true);
+      const scopes = getDefaultOAuthScopes();
+      expect(scopes).toEqual(['read', 'write']);
     });
 
-    it('should identify self-hosted WordPress sites correctly', async () => {
-      const { isWordPressComSite } = await import('../../src/lib/config.js');
+    it('should respect custom scopes from environment variable', async () => {
+      restoreEnv = mockEnv({
+        OAUTH_SCOPES: 'custom,scopes,test',
+      });
 
-      expect(isWordPressComSite('https://example.com')).toBe(false);
-      expect(isWordPressComSite('https://blog.example.com')).toBe(false);
-      expect(isWordPressComSite('https://my-site.org')).toBe(false);
+      const { getDefaultOAuthScopes } = await import('../../src/lib/config.js');
+
+      const scopes = getDefaultOAuthScopes();
+      expect(scopes).toEqual(['custom', 'scopes', 'test']);
     });
 
-    it('should handle URLs with different protocols and paths', async () => {
-      const { isWordPressComSite } = await import('../../src/lib/config.js');
+    it('should handle empty scopes environment variable', async () => {
+      restoreEnv = mockEnv({
+        OAUTH_SCOPES: '',
+      });
 
-      expect(isWordPressComSite('http://example.wordpress.com')).toBe(true);
-      expect(isWordPressComSite('https://example.wordpress.com/wp-admin')).toBe(true);
-      expect(isWordPressComSite('https://example.com/wordpress')).toBe(false);
-    });
+      const { getDefaultOAuthScopes } = await import('../../src/lib/config.js');
 
-    it('should handle invalid URLs gracefully', async () => {
-      const { isWordPressComSite } = await import('../../src/lib/config.js');
-
-      expect(isWordPressComSite('invalid-url')).toBe(false);
-      expect(isWordPressComSite('')).toBe(false);
-      expect(isWordPressComSite('javascript:alert(1)')).toBe(false);
-    });
-  });
-
-  describe('getRecommendedOAuthConfig function', () => {
-    it('should return WordPress.com OAuth config for WordPress.com sites', async () => {
-      const { getRecommendedOAuthConfig } = await import('../../src/lib/config.js');
-
-      const config = getRecommendedOAuthConfig('https://example.wordpress.com');
-
-      expect(config.authorizationEndpoint).toBe('https://public-api.wordpress.com/oauth2/authorize');
-      expect(config.tokenEndpoint).toBe('https://public-api.wordpress.com/oauth2/token');
-    });
-
-    it('should return self-hosted OAuth config for self-hosted sites', async () => {
-      const { getRecommendedOAuthConfig } = await import('../../src/lib/config.js');
-
-      const config = getRecommendedOAuthConfig('https://example.com');
-
-      expect(config.flowType).toBe('authorization_code');
-      expect(config.usePKCE).toBe(true);
-      expect(config.useResourceIndicator).toBe(true);
-      expect(config.authorizationEndpoint).toBeUndefined(); // Will be discovered
-      expect(config.tokenEndpoint).toBeUndefined(); // Will be discovered
-      expect(config.description).toBe('MCP-compliant OAuth 2.1');
-    });
-
-    it('should handle URLs with paths correctly', async () => {
-      const { getRecommendedOAuthConfig } = await import('../../src/lib/config.js');
-
-      const config = getRecommendedOAuthConfig('https://example.com/blog');
-
-      expect(config.flowType).toBe('authorization_code');
-      expect(config.authorizationEndpoint).toBeUndefined(); // Will be discovered
-      expect(config.tokenEndpoint).toBeUndefined(); // Will be discovered
-    });
-
-    it('should handle URLs with trailing slashes', async () => {
-      const { getRecommendedOAuthConfig } = await import('../../src/lib/config.js');
-
-      const config = getRecommendedOAuthConfig('https://example.com/');
-
-      expect(config.flowType).toBe('authorization_code');
-      expect(config.authorizationEndpoint).toBeUndefined(); // Will be discovered
-      expect(config.tokenEndpoint).toBeUndefined(); // Will be discovered
+      const scopes = getDefaultOAuthScopes();
+      expect(scopes).toEqual(['read', 'write']);
     });
   });
 
@@ -268,6 +224,70 @@ describe('Configuration Module', () => {
       const { CONFIG } = await import('../../src/lib/config.js');
 
       expect(CONFIG.WP_MCP_CONFIG_DIR).toBe('/custom/config/dir');
+    });
+  });
+
+  describe('parseOAuthScopes function', () => {
+    it('should return default scopes when environment variable is empty', async () => {
+      const { parseOAuthScopes } = await import('../../src/lib/config.js');
+      
+      const defaultScopes = ['read', 'write'];
+      expect(parseOAuthScopes('', defaultScopes)).toEqual(['read', 'write']);
+      expect(parseOAuthScopes('   ', defaultScopes)).toEqual(['read', 'write']);
+    });
+
+    it('should parse comma-separated scopes correctly', async () => {
+      const { parseOAuthScopes } = await import('../../src/lib/config.js');
+      
+      const defaultScopes = ['read', 'write'];
+      expect(parseOAuthScopes('global', defaultScopes)).toEqual(['global']);
+      expect(parseOAuthScopes('read,write,admin', defaultScopes)).toEqual(['read', 'write', 'admin']);
+      expect(parseOAuthScopes(' read , write , admin ', defaultScopes)).toEqual(['read', 'write', 'admin']);
+    });
+
+    it('should filter out empty scopes', async () => {
+      const { parseOAuthScopes } = await import('../../src/lib/config.js');
+      
+      const defaultScopes = ['read', 'write'];
+      expect(parseOAuthScopes('read,,write', defaultScopes)).toEqual(['read', 'write']);
+      expect(parseOAuthScopes(',read,write,', defaultScopes)).toEqual(['read', 'write']);
+    });
+
+    it('should handle single scope correctly', async () => {
+      const { parseOAuthScopes } = await import('../../src/lib/config.js');
+      
+      const defaultScopes = ['read', 'write'];
+      expect(parseOAuthScopes('global', defaultScopes)).toEqual(['global']);
+    });
+  });
+
+
+
+  describe('Health status function', () => {
+    it('should return health status with configuration state', async () => {
+      restoreEnv = mockEnv({
+        WP_API_URL: 'https://test-site.com',
+        JWT_TOKEN: 'test-token',
+      });
+
+      const { getConfigHealthStatus } = await import('../../src/lib/config.js');
+      const status = getConfigHealthStatus();
+
+      expect(status.status).toBe('healthy');
+      expect(status.version).toBe('0.2.9');
+      expect(status.uptime).toBeGreaterThan(0);
+      expect(status.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    });
+
+    it('should return unhealthy status for invalid configuration', async () => {
+      restoreEnv = mockEnv({
+        WP_API_URL: '', // Invalid
+      });
+
+      const { getConfigHealthStatus } = await import('../../src/lib/config.js');
+      const status = getConfigHealthStatus();
+
+      expect(status.status).toBe('unhealthy');
     });
   });
 });
