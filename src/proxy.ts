@@ -101,7 +101,15 @@ async function WordPressProxy() {
   }
 
   // Helper function to add session information to WordPress requests
-  const addSessionInfo = (wpRequestParams: any, mcpRequest: any) => {
+  interface WPRequestParams {
+    method?: string;
+    [key: string]: unknown;
+  }
+  interface MCPRequest {
+    id?: string | number;
+    [key: string]: unknown;
+  }
+  const addSessionInfo = (wpRequestParams: WPRequestParams, mcpRequest: MCPRequest) => {
     // Increment the request ID counter for each new request
     requestIdCounter++;
 
