@@ -1,6 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
-import { selectCallbackPort } from './port-utils';
+import { selectCallbackPort } from './port-utils.js';
 
 /**
  * Centralized configuration for MCP WordPress Remote
@@ -12,12 +12,16 @@ export const CONFIG = {
 
   // OAuth Configuration (MCP Authorization specification 2025-06-18 compliant)
   OAUTH_ENABLED: process.env.OAUTH_ENABLED === 'true', // Disabled by default, enable with 'true'
-  OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT ? parseInt(process.env.OAUTH_CALLBACK_PORT) : undefined,
+  OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT
+    ? parseInt(process.env.OAUTH_CALLBACK_PORT)
+    : undefined,
   OAUTH_HOST: process.env.OAUTH_HOST || '127.0.0.1',
   WP_OAUTH_CLIENT_ID: process.env.WP_OAUTH_CLIENT_ID || '', // No default - site-specific
 
-  // OAuth flow type - authorization_code (recommended) or implicit (legacy)  
-  OAUTH_FLOW_TYPE: (process.env.OAUTH_FLOW_TYPE || 'authorization_code') as 'authorization_code' | 'implicit',
+  // OAuth flow type - authorization_code (recommended) or implicit (legacy)
+  OAUTH_FLOW_TYPE: (process.env.OAUTH_FLOW_TYPE || 'authorization_code') as
+    | 'authorization_code'
+    | 'implicit',
   OAUTH_USE_PKCE: process.env.OAUTH_USE_PKCE !== 'false', // PKCE required for OAuth 2.1
   OAUTH_DYNAMIC_REGISTRATION: process.env.OAUTH_DYNAMIC_REGISTRATION !== 'false', // Dynamic client registration
 
@@ -127,7 +131,7 @@ export function parseOAuthScopes(envScopes: string, defaultScopes: string[]): st
   if (!envScopes || envScopes.trim() === '') {
     return defaultScopes;
   }
-  
+
   return envScopes
     .split(',')
     .map(scope => scope.trim())
@@ -170,8 +174,8 @@ export function validateConfig(): { isValid: boolean; errors: string[] } {
     if (
       CONFIG.OAUTH_CALLBACK_PORT !== undefined &&
       (isNaN(CONFIG.OAUTH_CALLBACK_PORT) ||
-      CONFIG.OAUTH_CALLBACK_PORT < 1 ||
-      CONFIG.OAUTH_CALLBACK_PORT > 65535)
+        CONFIG.OAUTH_CALLBACK_PORT < 1 ||
+        CONFIG.OAUTH_CALLBACK_PORT > 65535)
     ) {
       errors.push('OAUTH_CALLBACK_PORT must be a valid port number (1-65535) if specified');
     }
@@ -210,26 +214,26 @@ function formatConfigError(error: string): string {
   if (error.includes('WP_API_URL must be set')) {
     return `${error}. Example: WP_API_URL=https://yoursite.com`;
   }
-  
+
   if (error.includes('No authentication method configured')) {
     return `${error}. Configure one of these options:
     • JWT_TOKEN=your_jwt_token (preferred for APIs)
     • WP_API_USERNAME=username and WP_API_PASSWORD=app_password (for application passwords)
     • Set OAUTH_ENABLED=true and WP_OAUTH_CLIENT_ID=your_client_id (for OAuth 2.1)`;
   }
-  
+
   if (error.includes('OAUTH_CALLBACK_PORT')) {
     return `${error}. The port must be available for the OAuth callback server. Try a different port like 7777, 7890, or other ports in the safe 7000-7999 range.`;
   }
-  
+
   if (error.includes('PKCE is required')) {
     return `${error}. Set OAUTH_USE_PKCE=true (this is required for secure OAuth 2.1 authentication).`;
   }
-  
+
   if (error.includes('WP_OAUTH_CLIENT_ID')) {
     return `${error}. You need to register your application with WordPress first. Check if the WordPress MCP plugin is installed and activated.`;
   }
-  
+
   return error;
 }
 
@@ -243,7 +247,7 @@ export function getConfigHealthStatus(): {
   timestamp: string;
 } {
   const validation = validateConfig();
-  
+
   return {
     status: validation.isValid ? 'healthy' : 'unhealthy',
     uptime: process.uptime(),

@@ -1,6 +1,6 @@
 import net from 'net';
 import crypto from 'crypto';
-import { readJsonFile } from './persistent-auth-config';
+import { readJsonFile } from './persistent-auth-config.js';
 import { z } from 'zod';
 
 /**
@@ -62,17 +62,14 @@ export function calculateDefaultPort(serverUrlHash: string): number {
  * @returns The existing callback port or undefined if not found
  */
 export async function findExistingClientPort(serverUrlHash: string): Promise<number | undefined> {
-  const clientInfo = await readJsonFile<OAuthClientInfo>(
-    serverUrlHash, 
-    'client_info.json'
-  );
-  
+  const clientInfo = await readJsonFile<OAuthClientInfo>(serverUrlHash, 'client_info.json');
+
   if (!clientInfo) {
     return undefined;
   }
 
   const localhostRedirectUri = clientInfo.redirect_uris
-    .map((uri) => {
+    .map(uri => {
       try {
         return new URL(uri);
       } catch {
@@ -81,7 +78,7 @@ export async function findExistingClientPort(serverUrlHash: string): Promise<num
     })
     .filter((url): url is URL => url !== null)
     .find(({ hostname }) => hostname === 'localhost' || hostname === '127.0.0.1');
-    
+
   if (!localhostRedirectUri) {
     return undefined;
   }
@@ -107,29 +104,29 @@ export function getServerUrlHash(serverUrl: string): string {
  * @returns The selected callback port
  */
 export async function selectCallbackPort(
-  serverUrl: string, 
+  serverUrl: string,
   specifiedPort?: number,
   _unused?: boolean
 ): Promise<number> {
   const serverUrlHash = getServerUrlHash(serverUrl);
-  
+
   // If port is specified, use it
   if (specifiedPort) {
     return specifiedPort;
   }
-  
+
   // Try to find existing client port or calculate a default
   const defaultPort = calculateDefaultPort(serverUrlHash);
   const [existingClientPort, availablePort] = await Promise.all([
     findExistingClientPort(serverUrlHash),
-    findAvailablePort(defaultPort)
+    findAvailablePort(defaultPort),
   ]);
-  
+
   // Prefer existing client port for consistency
   if (existingClientPort) {
     return existingClientPort;
   }
-  
+
   // Use automatically selected port
   return availablePort;
 }
