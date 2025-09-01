@@ -40,7 +40,7 @@ type CompleteRequest = z.infer<typeof CompleteRequestSchema>;
 type ListRootsRequest = z.infer<typeof ListRootsRequestSchema>;
 
 // Check Node.js version
-const requiredNodeVersion = 22;
+const requiredNodeVersion = 18;
 const currentNodeVersion = parseInt(process.version.slice(1).split('.')[0]);
 if (currentNodeVersion < requiredNodeVersion) {
   logger.error(
@@ -51,23 +51,38 @@ if (currentNodeVersion < requiredNodeVersion) {
   process.exit(1);
 }
 
-// Check if fetch is available
-if (typeof globalThis.fetch !== 'function') {
-  logger.error(
-    'This application requires the fetch API, which is not available in your Node.js environment.',
-    'SYSTEM'
-  );
-  logger.error('Please ensure you are using Node.js 22 or later, or install node-fetch.', 'SYSTEM');
-  process.exit(1);
+// Setup fetch polyfill for Node.js 18+ compatibility
+async function setupFetchPolyfill(): Promise<void> {
+  if (typeof globalThis.fetch !== 'function') {
+    logger.info('Native fetch not available, loading node-fetch polyfill...', 'SYSTEM');
+    try {
+      const { default: nodeFetch } = await import('node-fetch');
+      // @ts-ignore - Polyfill fetch globally for Node.js 18 compatibility
+      globalThis.fetch = nodeFetch;
+      logger.info('Successfully loaded node-fetch polyfill', 'SYSTEM');
+    } catch (error) {
+      logger.error(
+        'Failed to load node-fetch polyfill. Please install node-fetch: npm install node-fetch',
+        'SYSTEM'
+      );
+      logger.error(`Error: ${error instanceof Error ? error.message : String(error)}`, 'SYSTEM');
+      process.exit(1);
+    }
+  } else {
+    logger.info('Using native fetch API', 'SYSTEM');
+  }
 }
 
 async function WordPressProxy() {
+  // Setup fetch polyfill before doing anything else
+  await setupFetchPolyfill();
+
   logger.info('Starting WordPress MCP Proxy with enhanced authentication', 'PROXY');
 
   // Generate a unique session ID for this proxy instance
   const sessionId = randomUUID();
   logger.info(`Generated session ID: ${sessionId}`, 'PROXY');
-  
+
   // Initialize request ID counter for this session
   let requestIdCounter = 0;
 
@@ -82,20 +97,20 @@ async function WordPressProxy() {
   const addSessionInfo = (wpRequestParams: any, mcpRequest: any) => {
     // Increment the request ID counter for each new request
     requestIdCounter++;
-    
+
     const sessionInfo = {
       id: requestIdCounter,
       session_id: sessionId,
-      ...wpRequestParams
+      ...wpRequestParams,
     };
-    
+
     logger.debug(`Session info being sent to WordPress:`, 'SESSION', {
       id: sessionInfo.id,
       session_id: sessionInfo.session_id,
       method: sessionInfo.method,
-      original_mcp_id: mcpRequest.id || 'none'
+      original_mcp_id: mcpRequest.id || 'none',
     });
-    
+
     return sessionInfo;
   };
 
@@ -115,7 +130,10 @@ async function WordPressProxy() {
 
   const withLogging = (schema: string, handler: Function) => async (request: any) => {
     logger.debug(`Received ${schema} request`, 'MCP', request);
-    logger.debug(`Adding session info - Session ID: ${sessionId}, MCP Request ID: ${request.id}`, 'SESSION');
+    logger.debug(
+      `Adding session info - Session ID: ${sessionId}, MCP Request ID: ${request.id}`,
+      'SESSION'
+    );
     try {
       const response = await handler(request);
       logger.debug(`${schema} response sent`, 'MCP');
@@ -131,10 +149,15 @@ async function WordPressProxy() {
     ListToolsRequestSchema,
     withLogging('ListTools', async (request: ListToolsRequest) => {
       logger.debug('Processing ListToolsRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'tools/list',
-        cursor: request.params?.cursor,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'tools/list',
+            cursor: request.params?.cursor,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -144,11 +167,16 @@ async function WordPressProxy() {
     CallToolRequestSchema,
     withLogging('CallTool', async (request: CallToolRequest) => {
       logger.debug('Processing CallToolRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'tools/call',
-        name: request.params.name,
-        arguments: request.params.arguments,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'tools/call',
+            name: request.params.name,
+            arguments: request.params.arguments,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -158,10 +186,15 @@ async function WordPressProxy() {
     ListResourcesRequestSchema,
     withLogging('ListResources', async (request: ListResourcesRequest) => {
       logger.debug('Processing ListResourcesRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'resources/list',
-        cursor: request.params?.cursor,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'resources/list',
+            cursor: request.params?.cursor,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -171,10 +204,15 @@ async function WordPressProxy() {
     ListResourceTemplatesRequestSchema,
     withLogging('ListResourceTemplates', async (request: ListResourceTemplatesRequest) => {
       logger.debug('Processing ListResourceTemplatesRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'resources/templates/list',
-        cursor: request.params?.cursor,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'resources/templates/list',
+            cursor: request.params?.cursor,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -184,10 +222,15 @@ async function WordPressProxy() {
     ReadResourceRequestSchema,
     withLogging('ReadResource', async (request: ReadResourceRequest) => {
       logger.debug('Processing ReadResourceRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'resources/read',
-        uri: request.params.uri,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'resources/read',
+            uri: request.params.uri,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -197,10 +240,15 @@ async function WordPressProxy() {
     SubscribeRequestSchema,
     withLogging('Subscribe', async (request: SubscribeRequest) => {
       logger.debug('Processing SubscribeRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'resources/subscribe',
-        uri: request.params.uri,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'resources/subscribe',
+            uri: request.params.uri,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -210,10 +258,15 @@ async function WordPressProxy() {
     UnsubscribeRequestSchema,
     withLogging('Unsubscribe', async (request: UnsubscribeRequest) => {
       logger.debug('Processing UnsubscribeRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'resources/unsubscribe',
-        uri: request.params.uri,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'resources/unsubscribe',
+            uri: request.params.uri,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -223,10 +276,15 @@ async function WordPressProxy() {
     ListPromptsRequestSchema,
     withLogging('ListPrompts', async (request: ListPromptsRequest) => {
       logger.debug('Processing ListPromptsRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'prompts/list',
-        cursor: request.params?.cursor,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'prompts/list',
+            cursor: request.params?.cursor,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -236,11 +294,16 @@ async function WordPressProxy() {
     GetPromptRequestSchema,
     withLogging('GetPrompt', async (request: GetPromptRequest) => {
       logger.debug('Processing GetPromptRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'prompts/get',
-        name: request.params.name,
-        arguments: request.params.arguments,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'prompts/get',
+            name: request.params.name,
+            arguments: request.params.arguments,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -250,10 +313,15 @@ async function WordPressProxy() {
     SetLevelRequestSchema,
     withLogging('SetLevel', async (request: SetLevelRequest) => {
       logger.debug('Processing SetLevelRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'logging/setLevel',
-        level: request.params.level,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'logging/setLevel',
+            level: request.params.level,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -263,11 +331,16 @@ async function WordPressProxy() {
     CompleteRequestSchema,
     withLogging('Complete', async (request: CompleteRequest) => {
       logger.debug('Processing CompleteRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'completion/complete',
-        ref: request.params.ref,
-        argument: request.params.argument,
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'completion/complete',
+            ref: request.params.ref,
+            argument: request.params.argument,
+          },
+          request
+        )
+      );
       return response;
     })
   );
@@ -277,9 +350,14 @@ async function WordPressProxy() {
     ListRootsRequestSchema,
     withLogging('ListRoots', async (request: ListRootsRequest) => {
       logger.debug('Processing ListRootsRequest', 'MCP');
-      const response = await wpRequest(addSessionInfo({
-        method: 'roots/list',
-      }, request));
+      const response = await wpRequest(
+        addSessionInfo(
+          {
+            method: 'roots/list',
+          },
+          request
+        )
+      );
       return response;
     })
   );
