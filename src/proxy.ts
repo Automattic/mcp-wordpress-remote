@@ -52,20 +52,12 @@ if (currentNodeVersion < requiredNodeVersion) {
 }
 
 // Setup fetch polyfill for Node.js 18+ compatibility
-
-// Extend globalThis to include fetch for polyfill assignment
-declare global {
-  // The type signature for fetch is compatible with node-fetch's default export
-  // You may want to refine the type if you use a specific fetch signature
-  var fetch: typeof import('node-fetch')['default'];
-}
-
 async function setupFetchPolyfill(): Promise<void> {
   if (typeof globalThis.fetch !== 'function') {
     logger.info('Native fetch not available, loading node-fetch polyfill...', 'SYSTEM');
     try {
       const { default: nodeFetch } = await import('node-fetch');
-      globalThis.fetch = nodeFetch;
+      (globalThis as any).fetch = nodeFetch;
       logger.info('Successfully loaded node-fetch polyfill', 'SYSTEM');
     } catch (error) {
       logger.error(
@@ -102,7 +94,7 @@ async function WordPressProxy() {
 
   // Helper function to add session information to WordPress requests
   interface WPRequestParams {
-    method?: string;
+    method: string;
     [key: string]: unknown;
   }
   interface MCPRequest {
