@@ -3,7 +3,7 @@
   "version": "0.2.10",
   "description": "MCP WordPress Remote proxy server",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=18.0.0"
   },
   "keywords": [
     "mcp",
@@ -47,6 +47,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
     "express": "^4.18.2",
+    "node-fetch": "^3.3.2",
     "open": "^10.0.0"
   },
   "devDependencies": {
@@ -54,7 +55,7 @@
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.12",
     "@types/mockdate": "^2.0.0",
-    "@types/node": "^20.11.19",
+    "@types/node": "^18.19.0",
     "@types/supertest": "^6.0.3",
     "@types/tmp": "^0.2.6",
     "jest": "^29.7.0",
@@ -77,7 +78,23 @@
     ],
     "dts": true,
     "clean": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "noExternal": [
+      "@modelcontextprotocol/sdk",
+      "express",
+      "node-fetch",
+      "open"
+    ],
+    "external": [
+      "node:*"
+    ],
+    "minify": false,
+    "sourcemap": false,
+    "target": "node18",
+    "platform": "node",
+    "banner": {
+      "js": "import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
+    }
   },
   "jest": {
     "testEnvironment": "node",
@@ -96,18 +113,25 @@
       "json",
       "node"
     ],
-    "extensionsToTreatAsEsm": [".ts"],
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ],
     "preset": "ts-jest/presets/default-esm",
     "transform": {
-      "^.+\\.ts$": ["ts-jest", {
-        "useESM": true
-      }]
+      "^.+\\.ts$": [
+        "ts-jest",
+        {
+          "useESM": true
+        }
+      ]
     },
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1",
       "^open$": "<rootDir>/tests/__mocks__/open.ts"
     },
-    "setupFilesAfterEnv": ["<rootDir>/tests/setup.ts"],
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setup.ts"
+    ],
     "collectCoverageFrom": [
       "src/**/*.ts",
       "!src/**/*.d.ts",
