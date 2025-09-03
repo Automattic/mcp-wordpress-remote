@@ -1,6 +1,6 @@
 {
   "name": "@automattic/mcp-wordpress-remote",
-  "version": "0.2.11",
+  "version": "0.2.13",
   "description": "MCP WordPress Remote proxy server",
   "engines": {
     "node": ">=18.0.0"
@@ -23,6 +23,16 @@
     "LICENSE"
   ],
   "main": "dist/proxy.js",
+  "exports": {
+    ".": {
+      "import": "./dist/proxy.js",
+      "types": "./dist/proxy.d.ts"
+    },
+    "./lib": {
+      "import": "./dist/lib.js",
+      "types": "./dist/lib.d.ts"
+    }
+  },
   "bin": {
     "@automattic/mcp-wordpress-remote": "dist/proxy.js"
   },
@@ -71,7 +81,8 @@
   },
   "tsup": {
     "entry": [
-      "src/proxy.ts"
+      "src/proxy.ts",
+      "src/lib.ts"
     ],
     "format": [
       "esm"
@@ -79,6 +90,7 @@
     "dts": true,
     "clean": true,
     "outDir": "dist",
+    "splitting": false,
     "noExternal": [
       "@modelcontextprotocol/sdk",
       "express",
