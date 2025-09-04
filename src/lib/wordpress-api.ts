@@ -54,9 +54,10 @@ function constructApiUrl(baseUrl: string, defaultEndpoint: string): string {
   try {
     const urlObj = new URL(cleanUrl);
     const hasCustomPath = urlObj.pathname && urlObj.pathname !== '/' && urlObj.pathname.length > 0;
+    const hasCustomQuery = urlObj.search && urlObj.search.length > 0;
     
-    if (hasCustomPath) {
-      // URL has a custom path - use it exactly as provided
+    if (hasCustomPath || hasCustomQuery) {
+      // URL has a custom path or query strings - use it exactly as provided
       return cleanUrl;
     } else {
       // Standard WordPress installation - use REST route format with default endpoint
