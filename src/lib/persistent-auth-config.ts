@@ -4,11 +4,11 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import crypto from 'crypto';
 import { logger } from './utils.js';
-import { CONFIG } from './config.js';
+import { CONFIG, MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
 import { WPTokens, WPClientInfo, TokenValidationResult, LockfileData } from './oauth-types.js';
 
-// Hardcoded version for directory naming
-const VERSION = '0.2.1';
+// Use version from config for directory naming
+const VERSION = MCP_WORDPRESS_REMOTE_VERSION;
 
 /**
  * WordPress MCP Remote Authentication Configuration

@@ -29,6 +29,9 @@ let mcpOAuthProvider: MCPOAuthProvider | null = null;
 let authCoordinator: any = null;
 let globalEvents: EventEmitter | null = null;
 
+// Global session ID received from WordPress server
+let globalSessionId: string | null = null;
+
 function validateEnvironment() {
   const validation = validateConfig();
   if (!validation.isValid) {
@@ -160,8 +163,16 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
   }
 }
 
+/**
+ * Get the current session ID
+ */
+export function getSessionId(): string | null {
+  return globalSessionId;
+}
+
 export async function wpRequest(
-  params: WordPressRequestParams = { method: 'init' }
+  requestData: any,
+  useJsonRpc: boolean = true
 ): Promise<WordPressResponse> {
   // Validate environment variables first
   validateEnvironment();
@@ -170,8 +181,13 @@ export async function wpRequest(
   const method = 'POST';
 
   // Log the request parameters for debugging
-  logger.api(`Request method: ${params.method || 'init'}`);
-  logger.debug(`Request args: ${JSON.stringify(params.args || {})}`, 'API');
+  if (useJsonRpc) {
+    logger.api(`Request method: ${requestData.method || 'unknown'} (JSON-RPC)`);
+    logger.debug(`JSON-RPC message: ${JSON.stringify(requestData)}`, 'API');
+  } else {
+    logger.api(`Request method: ${requestData.method || 'unknown'} (Simple)`);
+    logger.debug(`Simple request: ${JSON.stringify(requestData)}`, 'API');
+  }
 
   // Prepare authorization header - try authentication methods in order of priority
   let authHeader: string = '';
@@ -198,21 +214,26 @@ export async function wpRequest(
 
   // 3. Basic Auth (fallback or when OAuth is disabled)
   if (!authHeader && CONFIG.WP_API_USERNAME && CONFIG.WP_API_PASSWORD) {
-    // Determine which credentials to use based on the method and args
+    // Determine which credentials to use based on the method and params
     let username: string;
     let password: string;
 
+    // Determine method and tool name based on transport type
+    const method = useJsonRpc ? requestData.method : requestData.method;
+    const toolName = useJsonRpc 
+      ? (requestData.params?.name || requestData.params?.tool)
+      : (requestData.name || requestData.tool || requestData.args?.tool);
+
     if (
-      params.method === 'tools/call' &&
-      params.args &&
-      params.args.tool &&
-      params.args.tool.startsWith('wc_reports_')
+      method === 'tools/call' &&
+      toolName &&
+      toolName.startsWith('wc_reports_')
     ) {
       // Use WooCommerce credentials for WooCommerce report tools
       username = CONFIG.WOO_CUSTOMER_KEY!;
       password = CONFIG.WOO_CUSTOMER_SECRET!;
 
-      logger.auth(`Using WooCommerce credentials for tool: ${params.args.tool}`);
+      logger.auth(`Using WooCommerce credentials for tool: ${toolName}`);
 
       // Validate WooCommerce credentials
       if (!username || !password) {
@@ -226,7 +247,7 @@ export async function wpRequest(
       username = CONFIG.WP_API_USERNAME!;
       password = CONFIG.WP_API_PASSWORD!;
 
-      logger.auth(`Using WordPress Basic Auth for method: ${params.method || 'init'}`);
+      logger.auth(`Using WordPress Basic Auth for method: ${method || 'unknown'}`);
     }
 
     // Log credential information (without exposing the actual values)
@@ -257,12 +278,19 @@ export async function wpRequest(
   const headers: Record<string, string> = {
     Authorization: authHeader,
     'Content-Type': 'application/json',
+    'MCP-Protocol-Version': '2025-06-18', // MCP protocol version
   };
+
+  // Add session ID header if available (for MCP compliance)
+  // Session ID will be set after we receive it from WordPress initialize response
+  if (globalSessionId) {
+    headers['Mcp-Session-Id'] = globalSessionId;
+  }
 
   const fetchOptions: RequestInit = {
     method,
     headers,
-    body: JSON.stringify(params),
+    body: JSON.stringify(requestData),
   };
 
   try {
@@ -285,7 +313,39 @@ export async function wpRequest(
     }
 
     const responseData = await response.json();
+    
+    // Extract session ID from response headers (for initialize requests)
+    const sessionIdHeader = response.headers.get('Mcp-Session-Id');
+    if (sessionIdHeader && !globalSessionId) {
+      globalSessionId = sessionIdHeader;
+      logger.info(`Session ID received from WordPress: ${globalSessionId}`, 'SESSION');
+    }
+    
     logger.api('Response received successfully');
+    logger.debug(`Response data: ${JSON.stringify(responseData)}`, 'API');
+    
+    // Handle response format based on transport type
+    if (useJsonRpc && responseData && typeof responseData === 'object') {
+      const jsonrpcResponse = responseData as any; // Type assertion for JSON-RPC response
+      // Check if this is a JSON-RPC response
+      if (jsonrpcResponse.jsonrpc === '2.0') {
+        if (jsonrpcResponse.error) {
+          // Handle JSON-RPC error response
+          logger.error(`JSON-RPC error response: ${JSON.stringify(jsonrpcResponse.error)}`, 'API');
+          throw new APIError(
+            `WordPress JSON-RPC error: ${jsonrpcResponse.error.message}`,
+            jsonrpcResponse.error.code || 500,
+            url,
+            JSON.stringify(jsonrpcResponse.error)
+          );
+        } else if (jsonrpcResponse.result !== undefined) {
+          // Extract result from JSON-RPC response
+          return jsonrpcResponse.result as WordPressResponse;
+        }
+      }
+    }
+    
+    // For simple transport or non-JSON-RPC responses, return response as-is
     return responseData as WordPressResponse;
   } catch (error) {
     if (error instanceof APIError) {

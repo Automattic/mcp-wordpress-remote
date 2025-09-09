@@ -17,13 +17,13 @@ const AUTHORIZATION_CODE_HTML = `
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WordPress MCP OAuth Authorization</title>
+    <title>MCP Client Authorization</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             margin: 0;
             padding: 40px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #f5f5f5;
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -79,7 +79,7 @@ const AUTHORIZATION_CODE_HTML = `
 </head>
 <body>
     <div class="container">
-        <h1>WordPress MCP OAuth Authorization</h1>
+        <h1>MCP Client Authorization</h1>
         <div class="spinner" id="spinner"></div>
         <div id="status" class="loading">Processing authorization code...</div>
         <div id="details" class="details"></div>
@@ -126,12 +126,7 @@ const AUTHORIZATION_CODE_HTML = `
             .then(response => {
                 if (response.ok) {
                     displayStatus('✅ Authorization successful!', 'success');
-                    displayDetails('OAuth 2.1 authentication completed. You can now close this window.');
-                    // Auto-close after 3 seconds
-                    setTimeout(() => {
-                        displayDetails('Closing window...');
-                        setTimeout(() => window.close(), 1000);
-                    }, 3000);
+                    displayDetails('You can safely close this window.');
                 } else {
                     return response.json().then(err => {
                         throw new Error(err.error || 'Failed to exchange authorization code');
@@ -165,12 +160,7 @@ const AUTHORIZATION_CODE_HTML = `
             .then(response => {
                 if (response.ok) {
                     displayStatus('✅ Authorization successful!', 'success');
-                    displayDetails('OAuth authentication completed. You can now close this window.');
-                    // Auto-close after 3 seconds
-                    setTimeout(() => {
-                        displayDetails('Closing window...');
-                        setTimeout(() => window.close(), 1000);
-                    }, 3000);
+                    displayDetails('You can safely close this window.');
                 } else {
                     return response.json().then(err => {
                         throw new Error(err.error || 'Failed to store access token');
