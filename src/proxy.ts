@@ -3,10 +3,11 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { InitializeResult } from './lib/types.js';
-import { wpRequest } from './lib/wordpress-api.js';
+import { wpRequest, getSessionId } from './lib/wordpress-api.js';
 import { logger, LogLevel } from './lib/utils.js';
 import { cleanupExpiredTokens } from './lib/persistent-auth-config.js';
 import { CONFIG } from './lib/config.js';
+import { isAPIError, APIError } from './lib/oauth-types.js';
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -38,6 +39,59 @@ type GetPromptRequest = z.infer<typeof GetPromptRequestSchema>;
 type SetLevelRequest = z.infer<typeof SetLevelRequestSchema>;
 type CompleteRequest = z.infer<typeof CompleteRequestSchema>;
 type ListRootsRequest = z.infer<typeof ListRootsRequestSchema>;
+
+/**
+ * Maps HTTP status codes to MCP JSON-RPC error codes
+ * Based on the MCP error codes from RestTransport.php
+ */
+function mapHttpStatusToMcpCode(statusCode: number): number {
+  // MCP error codes (matching McpErrorFactory constants)
+  const MCP_ERROR_CODES = {
+    PARSE_ERROR: -32700,
+    INVALID_REQUEST: -32600,
+    METHOD_NOT_FOUND: -32601,
+    INVALID_PARAMS: -32602,
+    INTERNAL_ERROR: -32603,
+    UNAUTHORIZED: -32010,
+    PERMISSION_DENIED: -32008,
+  };
+
+  switch (statusCode) {
+    case 400: // Bad Request
+      return MCP_ERROR_CODES.INVALID_REQUEST;
+    case 401: // Unauthorized
+      return MCP_ERROR_CODES.UNAUTHORIZED;
+    case 403: // Forbidden
+      return MCP_ERROR_CODES.PERMISSION_DENIED;
+    case 404: // Not Found
+      return MCP_ERROR_CODES.METHOD_NOT_FOUND;
+    case 422: // Unprocessable Entity
+      return MCP_ERROR_CODES.INVALID_PARAMS;
+    case 500: // Internal Server Error
+    case 502: // Bad Gateway
+    case 503: // Service Unavailable
+    case 504: // Gateway Timeout
+    default:
+      return MCP_ERROR_CODES.INTERNAL_ERROR;
+  }
+}
+
+/**
+ * Converts an APIError to MCP error response format
+ */
+function convertAPIErrorToMcpError(error: APIError) {
+  return {
+    error: {
+      code: mapHttpStatusToMcpCode(error.statusCode),
+      message: error.message,
+      data: {
+        statusCode: error.statusCode,
+        endpoint: error.endpoint,
+        response: error.response,
+      },
+    },
+  };
+}
 
 // Check Node.js version
 const requiredNodeVersion = 18;
@@ -78,12 +132,15 @@ async function WordPressProxy() {
 
   logger.info('Starting WordPress MCP Proxy with enhanced authentication', 'PROXY');
 
-  // Generate a unique session ID for this proxy instance
-  const sessionId = randomUUID();
-  logger.info(`Generated session ID: ${sessionId}`, 'PROXY');
+  // Session ID will be provided by WordPress server after initialization
+  let sessionId: string | null = null;
+  logger.info('Proxy started - session ID will be obtained from WordPress server', 'PROXY');
 
   // Initialize request ID counter for this session
   let requestIdCounter = 0;
+
+  // Transport type detection - will be determined during initialization
+  let transportType: 'jsonrpc' | 'simple' | null = null;
 
   // Clean up any expired tokens on startup
   try {
@@ -105,25 +162,80 @@ async function WordPressProxy() {
     // Increment the request ID counter for each new request
     requestIdCounter++;
 
-    const sessionInfo = {
-      id: requestIdCounter,
-      session_id: sessionId,
-      ...wpRequestParams,
+    // Create proper MCP JSON-RPC format
+    const { method, ...params } = wpRequestParams;
+    const mcpMessage = {
+      jsonrpc: '2.0',
+      method: method,
+      id: mcpRequest.id || requestIdCounter, // Use original MCP request ID
+      params: {
+        ...params,
+        // Add internal tracking for WordPress
+        _proxy_request_id: requestIdCounter,
+      },
     };
 
-    logger.debug(`Session info being sent to WordPress:`, 'SESSION', {
-      id: sessionInfo.id,
-      session_id: sessionInfo.session_id,
-      method: sessionInfo.method,
+    logger.debug(`MCP JSON-RPC message being sent to WordPress:`, 'SESSION', {
+      jsonrpc: mcpMessage.jsonrpc,
+      method: mcpMessage.method,
+      id: mcpMessage.id,
       original_mcp_id: mcpRequest.id || 'none',
+      session_id: sessionId || 'not-yet-obtained',
     });
 
-    return sessionInfo;
+    return mcpMessage;
   };
 
-  // Initialize the WordPress API connection (this will trigger OAuth flow if needed)
-  logger.info('Initializing connection to WordPress API...', 'PROXY');
-  const init = (await wpRequest(addSessionInfo({ method: 'initialize' }, {}))) as InitializeResult;
+  // Helper function to prepare request based on transport type
+  const prepareRequest = (wpRequestParams: WPRequestParams, mcpRequest: MCPRequest) => {
+    if (transportType === 'jsonrpc') {
+      // Use full JSON-RPC format
+      return addSessionInfo(wpRequestParams, mcpRequest);
+    } else {
+      // Use simple format (just the params)
+      return wpRequestParams;
+    }
+  };
+
+  // Initialize the WordPress API connection with transport detection
+  logger.info('Initializing connection to WordPress API with transport detection...', 'PROXY');
+  
+  let init: InitializeResult;
+  
+  try {
+    // First, try JSON-RPC format
+    logger.info('Attempting JSON-RPC transport...', 'PROXY');
+    const initMessage = addSessionInfo({ method: 'initialize' }, {});
+    const initResponse = await wpRequest(initMessage, true); // Use JSON-RPC
+    init = initResponse as InitializeResult;
+    transportType = 'jsonrpc';
+    logger.info('✅ JSON-RPC transport detected and working', 'PROXY');
+  } catch (error) {
+    // If JSON-RPC fails, try simple format
+    logger.warn('JSON-RPC transport failed, trying simple transport...', 'PROXY');
+    logger.debug('JSON-RPC error:', 'PROXY', error);
+    
+    try {
+      const simpleInitRequest = { method: 'initialize' };
+      const initResponse = await wpRequest(simpleInitRequest, false); // Use simple format
+      init = initResponse as InitializeResult;
+      transportType = 'simple';
+      logger.info('✅ Simple transport detected and working', 'PROXY');
+    } catch (simpleError) {
+      logger.error('Both JSON-RPC and simple transports failed', 'PROXY', simpleError);
+      throw new Error('Unable to establish connection with either transport type');
+    }
+  }
+  
+  // Get the session ID that WordPress provided
+  sessionId = getSessionId();
+  if (sessionId) {
+    logger.info(`Using session ID from WordPress: ${sessionId}`, 'PROXY');
+  } else {
+    logger.warn('No session ID received from WordPress - continuing without session', 'PROXY');
+  }
+  
+  logger.info(`WordPress connection initialized successfully using ${transportType} transport`, 'PROXY');
 
   const server = new Server(
     {
@@ -147,6 +259,18 @@ async function WordPressProxy() {
       return response;
     } catch (error) {
       logger.error(`Error handling ${schema} request`, 'MCP', error);
+      
+      // Convert APIError to proper MCP error format
+      if (isAPIError(error)) {
+        logger.debug(`Converting APIError to MCP error format for ${schema}`, 'MCP', {
+          statusCode: error.statusCode,
+          endpoint: error.endpoint,
+          message: error.message,
+        });
+        return convertAPIErrorToMcpError(error);
+      }
+      
+      // Re-throw non-API errors (they should be handled by the MCP SDK)
       throw error;
     }
   };
@@ -156,15 +280,14 @@ async function WordPressProxy() {
     ListToolsRequestSchema,
     withLogging('ListTools', async (request: ListToolsRequest) => {
       logger.debug('Processing ListToolsRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'tools/list',
-            cursor: request.params?.cursor,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'tools/list',
+          cursor: request.params?.cursor,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -174,16 +297,15 @@ async function WordPressProxy() {
     CallToolRequestSchema,
     withLogging('CallTool', async (request: CallToolRequest) => {
       logger.debug('Processing CallToolRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'tools/call',
-            name: request.params.name,
-            arguments: request.params.arguments,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'tools/call',
+          name: request.params.name,
+          arguments: request.params.arguments,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -193,15 +315,14 @@ async function WordPressProxy() {
     ListResourcesRequestSchema,
     withLogging('ListResources', async (request: ListResourcesRequest) => {
       logger.debug('Processing ListResourcesRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'resources/list',
-            cursor: request.params?.cursor,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'resources/list',
+          cursor: request.params?.cursor,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -211,15 +332,14 @@ async function WordPressProxy() {
     ListResourceTemplatesRequestSchema,
     withLogging('ListResourceTemplates', async (request: ListResourceTemplatesRequest) => {
       logger.debug('Processing ListResourceTemplatesRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'resources/templates/list',
-            cursor: request.params?.cursor,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'resources/templates/list',
+          cursor: request.params?.cursor,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -229,15 +349,14 @@ async function WordPressProxy() {
     ReadResourceRequestSchema,
     withLogging('ReadResource', async (request: ReadResourceRequest) => {
       logger.debug('Processing ReadResourceRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'resources/read',
-            uri: request.params.uri,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'resources/read',
+          uri: request.params.uri,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -247,15 +366,14 @@ async function WordPressProxy() {
     SubscribeRequestSchema,
     withLogging('Subscribe', async (request: SubscribeRequest) => {
       logger.debug('Processing SubscribeRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'resources/subscribe',
-            uri: request.params.uri,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'resources/subscribe',
+          uri: request.params.uri,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -265,15 +383,14 @@ async function WordPressProxy() {
     UnsubscribeRequestSchema,
     withLogging('Unsubscribe', async (request: UnsubscribeRequest) => {
       logger.debug('Processing UnsubscribeRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'resources/unsubscribe',
-            uri: request.params.uri,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'resources/unsubscribe',
+          uri: request.params.uri,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -283,15 +400,14 @@ async function WordPressProxy() {
     ListPromptsRequestSchema,
     withLogging('ListPrompts', async (request: ListPromptsRequest) => {
       logger.debug('Processing ListPromptsRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'prompts/list',
-            cursor: request.params?.cursor,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'prompts/list',
+          cursor: request.params?.cursor,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -301,16 +417,15 @@ async function WordPressProxy() {
     GetPromptRequestSchema,
     withLogging('GetPrompt', async (request: GetPromptRequest) => {
       logger.debug('Processing GetPromptRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'prompts/get',
-            name: request.params.name,
-            arguments: request.params.arguments,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'prompts/get',
+          name: request.params.name,
+          arguments: request.params.arguments,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -320,15 +435,14 @@ async function WordPressProxy() {
     SetLevelRequestSchema,
     withLogging('SetLevel', async (request: SetLevelRequest) => {
       logger.debug('Processing SetLevelRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'logging/setLevel',
-            level: request.params.level,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'logging/setLevel',
+          level: request.params.level,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -338,16 +452,15 @@ async function WordPressProxy() {
     CompleteRequestSchema,
     withLogging('Complete', async (request: CompleteRequest) => {
       logger.debug('Processing CompleteRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'completion/complete',
-            ref: request.params.ref,
-            argument: request.params.argument,
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'completion/complete',
+          ref: request.params.ref,
+          argument: request.params.argument,
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
@@ -357,14 +470,13 @@ async function WordPressProxy() {
     ListRootsRequestSchema,
     withLogging('ListRoots', async (request: ListRootsRequest) => {
       logger.debug('Processing ListRootsRequest', 'MCP');
-      const response = await wpRequest(
-        addSessionInfo(
-          {
-            method: 'roots/list',
-          },
-          request
-        )
+      const requestData = prepareRequest(
+        {
+          method: 'roots/list',
+        },
+        request
       );
+      const response = await wpRequest(requestData, transportType === 'jsonrpc');
       return response;
     })
   );
