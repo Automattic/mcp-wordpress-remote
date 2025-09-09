@@ -1,6 +1,6 @@
 {
   "name": "@automattic/mcp-wordpress-remote",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "description": "MCP WordPress Remote proxy server",
   "engines": {
     "node": ">=18.0.0"
@@ -52,7 +52,10 @@
     "security:audit": "npm audit --audit-level moderate",
     "security:fix": "npm audit fix",
     "deps:update": "npm update",
-    "deps:check": "npm outdated"
+    "deps:check": "npm outdated",
+    "version:patch": "npm version patch",
+    "version:minor": "npm version minor",
+    "version:major": "npm version major"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",

@@ -2,6 +2,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { selectCallbackPort } from './port-utils.js';
 
+// Version constant - update this manually when releasing new versions
+export const MCP_WORDPRESS_REMOTE_VERSION = '0.2.16';
+
 /**
  * Centralized configuration for MCP WordPress Remote
  * All default values are defined here and can be overridden via environment variables
@@ -251,7 +254,7 @@ export function getConfigHealthStatus(): {
   return {
     status: validation.isValid ? 'healthy' : 'unhealthy',
     uptime: process.uptime(),
-    version: '0.2.9',
+    version: MCP_WORDPRESS_REMOTE_VERSION,
     timestamp: new Date().toISOString(),
   };
 }

@@ -3,12 +3,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createHash } from 'crypto';
 import { createServer } from 'http';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
-// Note: We don't import CONFIG here to avoid circular dependencies
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-// Version of the package
-export const MCP_WORDPRESS_REMOTE_VERSION = '0.2.1';
+// Export version from config to maintain backward compatibility
+export { MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
 
 // Log levels
 export enum LogLevel {
