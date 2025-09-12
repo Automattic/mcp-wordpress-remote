@@ -41,7 +41,7 @@ import {
 } from './mcp-oauth-utils.js';
 import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
 import { logger } from './utils.js';
-import { CONFIG, getDefaultOAuthScopes, getOAuthCallbackPort } from './config.js';
+import { CONFIG, getDefaultOAuthScopes, getOAuthCallbackPort, getCustomHeaders } from './config.js';
 
 /**
  * MCP-compliant OAuth 2.1 Provider for WordPress
@@ -171,9 +171,11 @@ export class MCPOAuthProvider {
       logger.oauth('Attempting discovery via 401 response method');
 
       // Make an unauthenticated request to trigger 401 with WWW-Authenticate header
+      const customHeaders = getCustomHeaders();
       const response = await fetch(this.config.serverUrl, {
         headers: {
           Accept: 'application/json',
+          ...customHeaders,
         },
       });
 
@@ -185,7 +187,12 @@ export class MCPOAuthProvider {
 
           if (authInfo.resource_metadata_url) {
             // Fetch protected resource metadata from the indicated URL
-            const metadataResponse = await fetch(authInfo.resource_metadata_url);
+            const metadataResponse = await fetch(authInfo.resource_metadata_url, {
+              headers: {
+                'Accept': 'application/json',
+                ...customHeaders,
+              },
+            });
             if (metadataResponse.ok) {
               this.resourceMetadata = (await metadataResponse.json()) as ProtectedResourceMetadata;
               logger.oauth('Protected resource metadata obtained via 401 response');
