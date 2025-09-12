@@ -1,6 +1,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import { selectCallbackPort } from './port-utils.js';
+import { logger } from './utils.js';
 
 // Version constant - update this manually when releasing new versions
 export const MCP_WORDPRESS_REMOTE_VERSION = '0.2.16';
@@ -57,6 +58,9 @@ export const CONFIG = {
   JWT_TOKEN: process.env.JWT_TOKEN,
   WOO_CUSTOMER_KEY: process.env.WOO_CUSTOMER_KEY,
   WOO_CUSTOMER_SECRET: process.env.WOO_CUSTOMER_SECRET,
+
+  // Custom Headers Configuration
+  CUSTOM_HEADERS: process.env.CUSTOM_HEADERS || '', // JSON string or comma-separated header:value pairs
 
   // Environment
   NODE_ENV: process.env.NODE_ENV || 'development',
@@ -123,6 +127,9 @@ export const getConfig = () => ({
   /** WooCommerce customer secret */
   wooCustomerSecret: CONFIG.WOO_CUSTOMER_SECRET,
 
+  /** Custom headers for API requests */
+  customHeaders: CONFIG.CUSTOM_HEADERS,
+
   /** Current environment */
   nodeEnv: CONFIG.NODE_ENV,
 });
@@ -150,24 +157,82 @@ export function getDefaultOAuthScopes(): string[] {
 }
 
 /**
+ * Parse custom headers from environment variable
+ * Supports both JSON format and comma-separated format
+ * 
+ * JSON format: {"X-MCP-API-Key": "value", "X-Custom-Header": "value"}
+ * Comma format: X-MCP-API-Key:value,X-Custom-Header:value
+ */
+export function parseCustomHeaders(customHeadersString: string): Record<string, string> {
+  if (!customHeadersString || customHeadersString.trim() === '') {
+    return {};
+  }
+
+  try {
+    // Try parsing as JSON first
+    if (customHeadersString.trim().startsWith('{')) {
+      return JSON.parse(customHeadersString);
+    }
+
+    // Parse comma-separated format
+    const headers: Record<string, string> = {};
+    const pairs = customHeadersString.split(',');
+    
+    for (const pair of pairs) {
+      const colonIndex = pair.indexOf(':');
+      if (colonIndex > 0) {
+        const key = pair.substring(0, colonIndex).trim();
+        const value = pair.substring(colonIndex + 1).trim();
+        if (key && value) {
+          headers[key] = value;
+        }
+      }
+    }
+
+    return headers;
+  } catch (error) {
+    logger.error('Error parsing custom headers', 'CONFIG', error);
+    return {};
+  }
+}
+
+/**
+ * Get parsed custom headers
+ */
+export function getCustomHeaders(): Record<string, string> {
+  // Read directly from process.env to handle dynamic environment variable changes
+  const customHeadersEnv = process.env.CUSTOM_HEADERS || '';
+  return parseCustomHeaders(customHeadersEnv);
+}
+
+/**
  * Validation function for required configuration
  */
 export function validateConfig(): { isValid: boolean; errors: string[] } {
   const errors: string[] = [];
 
-  // Check if we have at least one authentication method
-  const hasJWT = !!CONFIG.JWT_TOKEN;
-  const hasBasicAuth = !!(CONFIG.WP_API_USERNAME && CONFIG.WP_API_PASSWORD);
-  const hasOAuth = CONFIG.OAUTH_ENABLED;
+  // Read current values from environment (to handle dynamic changes)
+  const currentApiUrl = process.env.WP_API_URL || CONFIG.WP_API_URL;
+  const currentCustomHeaders = process.env.CUSTOM_HEADERS || CONFIG.CUSTOM_HEADERS;
+  const currentJwtToken = process.env.JWT_TOKEN || CONFIG.JWT_TOKEN;
+  const currentUsername = process.env.WP_API_USERNAME || CONFIG.WP_API_USERNAME;
+  const currentPassword = process.env.WP_API_PASSWORD || CONFIG.WP_API_PASSWORD;
+  const currentOAuthEnabled = (process.env.OAUTH_ENABLED === 'true') || CONFIG.OAUTH_ENABLED;
 
-  if (!hasJWT && !hasBasicAuth && !hasOAuth) {
+  // Check if we have at least one authentication method
+  const hasJWT = !!currentJwtToken;
+  const hasBasicAuth = !!(currentUsername && currentPassword);
+  const hasOAuth = currentOAuthEnabled;
+  const hasCustomHeaders = !!currentCustomHeaders && currentCustomHeaders.trim() !== '';
+
+  if (!hasJWT && !hasBasicAuth && !hasOAuth && !hasCustomHeaders) {
     errors.push(
-      'No authentication method configured. Please set one of: JWT_TOKEN, WP_API_USERNAME+WP_API_PASSWORD, or enable OAuth'
+      'No authentication method configured. Please set one of: JWT_TOKEN, WP_API_USERNAME+WP_API_PASSWORD, enable OAuth, or set CUSTOM_HEADERS'
     );
   }
 
   // Check API URL
-  if (!CONFIG.WP_API_URL || CONFIG.WP_API_URL === 'https://example.com') {
+  if (!currentApiUrl || currentApiUrl === 'https://example.com') {
     errors.push('WP_API_URL must be set to your WordPress site URL');
   }
 
@@ -222,7 +287,8 @@ function formatConfigError(error: string): string {
     return `${error}. Configure one of these options:
     • JWT_TOKEN=your_jwt_token (preferred for APIs)
     • WP_API_USERNAME=username and WP_API_PASSWORD=app_password (for application passwords)
-    • Set OAUTH_ENABLED=true and WP_OAUTH_CLIENT_ID=your_client_id (for OAuth 2.1)`;
+    • Set OAUTH_ENABLED=true and WP_OAUTH_CLIENT_ID=your_client_id (for OAuth 2.1)
+    • CUSTOM_HEADERS='{"X-API-Key": "your_api_key"}' (for custom header authentication)`;
   }
 
   if (error.includes('OAUTH_CALLBACK_PORT')) {
