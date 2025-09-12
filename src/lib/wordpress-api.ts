@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger, LogLevel } from './utils.js';
-import { CONFIG, validateConfig, getDefaultOAuthScopes } from './config.js';
+import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from './config.js';
 import { WPTokens, AuthError, APIError } from './oauth-types.js';
 import {
   getValidTokens,
@@ -260,31 +260,59 @@ export async function wpRequest(
     logger.debug(`Auth header length: ${auth.length}`, 'AUTH');
   }
 
-  // Ensure we have an authorization header
-  if (!authHeader) {
+  // Get custom headers early to check if they can serve as authentication
+  const customHeaders = getCustomHeaders();
+  const hasCustomHeaders = Object.keys(customHeaders).length > 0;
+
+  // Ensure we have an authorization header OR custom headers for authentication
+  if (!authHeader && !hasCustomHeaders) {
     throw new AuthError(
-      'No authentication method available. Please configure JWT_TOKEN, OAuth, or Basic Auth (WP_API_USERNAME+WP_API_PASSWORD).',
+      'No authentication method available. Please configure JWT_TOKEN, OAuth, Basic Auth (WP_API_USERNAME+WP_API_PASSWORD), or CUSTOM_HEADERS.',
       'NO_AUTH_METHOD'
     );
   }
 
+  // Get current API URL from environment (to handle dynamic changes)
+  const currentApiUrl = process.env.WP_API_URL || CONFIG.WP_API_URL;
+  
   logger.debug(`Environment: ${CONFIG.NODE_ENV}`, 'API');
-  logger.debug(`Base API URL: ${CONFIG.WP_API_URL}`, 'API');
+  logger.debug(`Base API URL: ${currentApiUrl}`, 'API');
 
   // Construct the final API URL based on whether the base URL has a custom path
-  const url = constructApiUrl(CONFIG.WP_API_URL, endpoint);
+  const url = constructApiUrl(currentApiUrl, endpoint);
   logger.debug(`Final requesting URL: ${url}`, 'API');
 
+  // Build headers object - only add Authorization if we have one
   const headers: Record<string, string> = {
-    Authorization: authHeader,
     'Content-Type': 'application/json',
     'MCP-Protocol-Version': '2025-06-18', // MCP protocol version
+    ...customHeaders, // Merge custom headers
   };
+
+  // Add Authorization header only if we have one
+  if (authHeader) {
+    headers.Authorization = authHeader;
+  }
 
   // Add session ID header if available (for MCP compliance)
   // Session ID will be set after we receive it from WordPress initialize response
   if (globalSessionId) {
     headers['Mcp-Session-Id'] = globalSessionId;
+  }
+
+  // Log authentication method being used
+  if (authHeader) {
+    logger.debug('Using Authorization header for authentication', 'API');
+  } else if (hasCustomHeaders) {
+    logger.auth('Using custom headers for authentication (no Authorization header)');
+  }
+
+  // Log custom headers (without exposing sensitive values)
+  if (hasCustomHeaders) {
+    logger.debug(`Custom headers added: ${Object.keys(customHeaders).join(', ')}`, 'API');
+    for (const [key, value] of Object.entries(customHeaders)) {
+      logger.debug(`Header ${key}: ${value.length} characters`, 'API');
+    }
   }
 
   const fetchOptions: RequestInit = {
