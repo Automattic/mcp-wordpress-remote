@@ -9,7 +9,10 @@
 export { logger, log, LogLevel } from './lib/utils.js';
 
 // Export configuration utilities
-export { CONFIG, getConfig, validateConfig, getDefaultOAuthScopes } from './lib/config.js';
+export { CONFIG, getConfig, validateConfig, getDefaultOAuthScopes, parseCustomHeaders, getCustomHeaders } from './lib/config.js';
+
+// Export WordPress API utilities
+export { wpRequest } from './lib/wordpress-api.js';
 
 // Export common types
 export type { WPTokens, WPClientInfo, TokenValidationResult } from './lib/oauth-types.js';

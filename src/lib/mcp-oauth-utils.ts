@@ -14,6 +14,7 @@ import {
   OAuthError,
 } from './oauth-types.js';
 import { logger } from './utils.js';
+import { getCustomHeaders } from './config.js';
 
 /**
  * Generate PKCE code verifier and challenge
@@ -72,7 +73,14 @@ export async function discoverAuthorizationServerMetadata(
 
     logger.oauth(`Discovering authorization server metadata: ${metadataUrl}`);
 
-    const response = await fetch(metadataUrl.toString());
+    // Include custom headers in discovery requests
+    const customHeaders = getCustomHeaders();
+    const response = await fetch(metadataUrl.toString(), {
+      headers: {
+        'Accept': 'application/json',
+        ...customHeaders,
+      },
+    });
 
     if (!response.ok) {
       throw new OAuthError(
@@ -116,7 +124,14 @@ export async function discoverProtectedResourceMetadata(
 
     logger.oauth(`Discovering protected resource metadata: ${metadataUrl}`);
 
-    const response = await fetch(metadataUrl.toString());
+    // Include custom headers in discovery requests
+    const customHeaders = getCustomHeaders();
+    const response = await fetch(metadataUrl.toString(), {
+      headers: {
+        'Accept': 'application/json',
+        ...customHeaders,
+      },
+    });
 
     if (!response.ok) {
       throw new OAuthError(
@@ -198,10 +213,13 @@ export async function registerDynamicClient(
   try {
     logger.oauth(`Attempting dynamic client registration: ${registrationEndpoint}`);
 
+    // Include custom headers in registration requests
+    const customHeaders = getCustomHeaders();
     const response = await fetch(registrationEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...customHeaders,
       },
       body: JSON.stringify(registrationRequest),
     });
@@ -269,10 +287,13 @@ export async function exchangeAuthorizationCode(
       params.set('resource', resource);
     }
 
+    // Include custom headers in token exchange requests
+    const customHeaders = getCustomHeaders();
     const response = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        ...customHeaders,
       },
       body: params.toString(),
     });
