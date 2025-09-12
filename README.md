@@ -45,6 +45,55 @@ Add to your MCP client configuration (e.g., Claude Desktop's `claude_desktop_con
 }
 ```
 
+### Custom Headers
+
+You can add custom headers to all API requests using the `CUSTOM_HEADERS` environment variable. This is useful for API keys, custom authentication, or other header requirements.
+
+#### JSON Format (Recommended):
+```json
+{
+  "mcpServers": {
+    "wordpress": {
+      "command": "npx",
+      "args": ["-y", "@automattic/mcp-wordpress-remote"],
+      "env": {
+        "WP_API_URL": "https://your-wordpress-site.com",
+        "CUSTOM_HEADERS": "{\"X-MCP-API-Key\": \"*Ibo7tweixlbfuwaiufxgakjyefctwajcetb*\", \"X-Custom-Header\": \"value\"}"
+      }
+    }
+  }
+}
+```
+
+#### Comma-Separated Format:
+```json
+{
+  "mcpServers": {
+    "wordpress": {
+      "command": "npx",
+      "args": ["-y", "@automattic/mcp-wordpress-remote"],
+      "env": {
+        "WP_API_URL": "https://your-wordpress-site.com",
+        "CUSTOM_HEADERS": "X-MCP-API-Key:IOskncfyes78U8on3q7ry43o487tybrc,X-Custom-Header:value"
+      }
+    }
+  }
+}
+```
+
+#### Command Line Usage:
+```bash
+CUSTOM_HEADERS='{"X-MCP-API-Key": "wc_mcp_FaQduhQcW0mfVaZgP3yaaqDuXaZ3mw7j"}' \
+WP_API_URL="https://your-site.com" \
+npx @automattic/mcp-wordpress-remote
+```
+
+Custom headers are included in:
+- All WordPress API requests
+- OAuth discovery requests
+- OAuth token exchange requests
+- OAuth client registration requests
+
 ### First Run
 
 1. **Start your MCP client** (Claude Desktop, etc.)
