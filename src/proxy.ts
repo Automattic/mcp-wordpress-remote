@@ -23,10 +23,31 @@ import {
   CompleteRequestSchema,
   ListRootsRequestSchema,
 } from './lib/mcp-types.js';
+import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 
 // Check Node.js version
 validateNodeVersion(18);
+
+/**
+ * Enhanced Client Message Logging
+ * 
+ * This proxy now includes comprehensive logging for all client messages at multiple levels:
+ * 
+ * 1. TRANSPORT level: Raw messages from the transport layer
+ * 2. CLIENT level: Processed messages with structured information  
+ * 3. TRANSPORT_DETECT level: Initialization and transport detection messages
+ * 
+ * Log levels:
+ * - INFO: Basic request/response information with emojis for easy scanning
+ * - DEBUG: Complete message objects and detailed debugging info
+ * - ERROR: Failed requests and transport errors
+ * 
+ * To control logging:
+ * - Set LOG_LEVEL=0 (ERROR), 1 (WARN), 2 (INFO), or 3 (DEBUG)
+ * - Set LOG_FILE=path/to/file.log to also log to a file
+ * - In development, DEBUG level is default; in production, INFO level is default
+ */
 
 
 async function WordPressProxy() {
@@ -45,20 +66,71 @@ async function WordPressProxy() {
   // Create session context
   const sessionContext = createSessionContext();
 
-  // Detect transport type and initialize connection
-  const { initResult } = await detectTransportType(sessionContext);
-
+  // Create server with minimal default info (will be updated with actual WordPress info on first initialize)
   const server = new Server(
     {
-      name: initResult.serverInfo.name,
-      version: initResult.serverInfo.version,
+      name: 'WordPress MCP Remote Proxy',
+      version: '0.2.17',
     },
     {
-      capabilities: initResult.capabilities as any, // Type assertion to fix linter error
+      capabilities: {
+        tools: {},
+        resources: {},
+        prompts: {},
+        logging: {},
+        completions: {},
+      },
     }
   );
 
-  // Register all MCP request handlers using the factory
+  // Handle initialize request by forwarding client parameters to WordPress (only one call)
+  server.setRequestHandler(InitializeRequestSchema, async (request) => {
+    logger.info('📩 Client Initialize Request received', 'INIT');
+    logger.debug('Initialize request details:', 'INIT', request);
+    
+    try {
+      // Forward the client's initialize parameters to WordPress server (first and only call)
+      logger.info('🔄 Initializing WordPress connection with client parameters', 'INIT');
+      const { initResult } = await detectTransportType(sessionContext, request.params);
+      
+      // Return the WordPress server's initialize response
+      const wordpressInitResponse = {
+        protocolVersion: initResult.protocolVersion || '2025-06-18',
+        serverInfo: initResult.serverInfo,
+        capabilities: initResult.capabilities,
+        instructions: initResult.instructions || 'MCP WordPress Remote Proxy Server'
+      };
+      
+      logger.info('✅ Returning WordPress server initialize response', 'INIT');
+      logger.debug('Initialize response:', 'INIT', wordpressInitResponse);
+      
+      return wordpressInitResponse;
+    } catch (error) {
+      logger.error('❌ Failed to initialize WordPress connection with client parameters', 'INIT', error);
+      
+      // Return a basic fallback response
+      const fallbackResponse = {
+        protocolVersion: '2025-06-18',
+        serverInfo: {
+          name: 'WordPress MCP Remote Proxy',
+          version: '0.2.17',
+        },
+        capabilities: {
+          tools: {},
+          resources: {},
+          prompts: {},
+          logging: {},
+          completions: {},
+        },
+        instructions: 'MCP WordPress Remote Proxy Server (Connection Failed)'
+      };
+      
+      logger.warn('⚠️ Using fallback initialize response', 'INIT');
+      return fallbackResponse;
+    }
+  });
+
+  // Register all other MCP request handlers using the factory
   server.setRequestHandler(ListToolsRequestSchema, createWrappedHandler(HANDLER_CONFIGS.listTools, sessionContext));
   server.setRequestHandler(CallToolRequestSchema, createWrappedHandler(HANDLER_CONFIGS.callTool, sessionContext));
   server.setRequestHandler(ListResourcesRequestSchema, createWrappedHandler(HANDLER_CONFIGS.listResources, sessionContext));
@@ -73,6 +145,30 @@ async function WordPressProxy() {
   server.setRequestHandler(ListRootsRequestSchema, createWrappedHandler(HANDLER_CONFIGS.listRoots, sessionContext));
 
   const transport = new StdioServerTransport();
+  
+  transport.onmessage = (message) => {
+    const msg = message as unknown;
+    const method = typeof (msg as any)?.method === 'string' ? (msg as any).method : 'unknown';
+    const id = (msg as any)?.id ?? 'none';
+    const hasParams = Boolean((msg as any)?.params && typeof (msg as any).params === 'object' && Object.keys((msg as any).params).length);
+    
+    logger.info('📥 Raw client message received', 'TRANSPORT', {
+      method,
+      id,
+      hasParams,
+      messageType: method === 'unknown' ? 'response/notification' : 'request',
+    });
+    logger.debug('Complete raw message:', 'TRANSPORT', message);
+  };
+
+  transport.onerror = (error) => {
+    logger.error('❌ Transport error:', 'TRANSPORT', error);
+  };
+
+  transport.onclose = () => {
+    logger.info('🔌 Transport connection closed', 'TRANSPORT');
+  };
+  
   // Connect to the transport
   server
     .connect(transport)

@@ -9,6 +9,7 @@ import { wpRequest, getSessionId } from './wordpress-api.js';
 import { InitializeResult } from './types.js';
 import { TransportType } from './mcp-types.js';
 import { addSessionInfo, SessionContext } from './session-utils.js';
+import { MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
 
 export interface TransportDetectionResult {
   transportType: TransportType;
@@ -20,33 +21,111 @@ export interface TransportDetectionResult {
  * Detect which transport type the WordPress server supports
  * Tries JSON-RPC first, falls back to simple format
  */
-export async function detectTransportType(context: SessionContext): Promise<TransportDetectionResult> {
-  logger.info('Initializing connection to WordPress API with transport detection...', 'PROXY');
+export async function detectTransportType(context: SessionContext, initParams?: any): Promise<TransportDetectionResult> {
+  logger.info('🔍 Starting transport detection and WordPress API initialization...', 'TRANSPORT_DETECT');
   
   let init: InitializeResult;
   let transportType: TransportType = null;
   
+  // Add proxy information to clientInfo
+  const enhancedParams = initParams ? { ...initParams } : {};
+  if (enhancedParams.clientInfo) {
+    // Verify clientInfo is a non-null object (not an array)
+    if (typeof enhancedParams.clientInfo === 'object' && enhancedParams.clientInfo !== null && !Array.isArray(enhancedParams.clientInfo)) {
+      // Capture original client name before any mutation
+      const originalClient = enhancedParams.clientInfo?.name || 'unknown';
+      
+      // Create a fresh newClientInfo object to avoid mutating the original
+      const newClientInfo = { ...enhancedParams.clientInfo };
+      
+      // Add/merge the proxied field without clobbering an existing proxied object
+      if (newClientInfo.proxied && typeof newClientInfo.proxied === 'object') {
+        // If proxied already exists, merge with it
+        newClientInfo.proxied = {
+          ...newClientInfo.proxied,
+          name: '@automattic/mcp-wordpress-remote',
+          version: MCP_WORDPRESS_REMOTE_VERSION
+        };
+      } else {
+        // If no proxied field exists, create it
+        newClientInfo.proxied = {
+          name: '@automattic/mcp-wordpress-remote',
+          version: MCP_WORDPRESS_REMOTE_VERSION
+        };
+      }
+      
+      // Assign the new clientInfo to enhancedParams (original initParams remains unchanged)
+      enhancedParams.clientInfo = newClientInfo;
+      
+      logger.info('📋 Added proxy information to clientInfo', 'TRANSPORT_DETECT', {
+        originalClient,
+        proxyName: '@automattic/mcp-wordpress-remote',
+        proxyVersion: MCP_WORDPRESS_REMOTE_VERSION
+      });
+    } else {
+      logger.warn('clientInfo is present but not a valid object, skipping enhancement', 'TRANSPORT_DETECT', {
+        clientInfoType: typeof enhancedParams.clientInfo,
+        isArray: Array.isArray(enhancedParams.clientInfo),
+        isNull: enhancedParams.clientInfo === null
+      });
+    }
+  } else {
+    logger.debug('No clientInfo provided in initialize parameters', 'TRANSPORT_DETECT');
+  }
+  
   try {
     // First, try JSON-RPC format
-    logger.info('Attempting JSON-RPC transport...', 'PROXY');
-    const initMessage = addSessionInfo({ method: 'initialize' }, {}, context);
+    logger.info('📡 Attempting JSON-RPC transport...', 'TRANSPORT_DETECT');
+    
+    // Prepare the initialize request with client parameters
+    // Include client params in wpRequestParams so they end up in the JSON-RPC params field
+    const wpRequestParams = {
+      method: 'initialize',
+      ...enhancedParams
+    };
+    
+    const initMessage = addSessionInfo(wpRequestParams, {}, context);
+    
+    logger.info('Sending initialization message via JSON-RPC:', 'TRANSPORT_DETECT', {
+      method: initMessage.method,
+      id: initMessage.id,
+      jsonrpc: initMessage.jsonrpc,
+      hasParams: !!initMessage.params && Object.keys(initMessage.params).length > 1, // More than just _proxy_request_id
+    });
+    logger.debug('Complete JSON-RPC init message:', 'TRANSPORT_DETECT', initMessage);
+    
     const initResponse = await wpRequest(initMessage, true); // Use JSON-RPC
     init = initResponse as InitializeResult;
     transportType = 'jsonrpc';
-    logger.info('✅ JSON-RPC transport detected and working', 'PROXY');
+    
+    logger.info('✅ JSON-RPC transport detected and working', 'TRANSPORT_DETECT');
+    logger.debug('JSON-RPC initialization response:', 'TRANSPORT_DETECT', init);
   } catch (error) {
     // If JSON-RPC fails, try simple format
-    logger.warn('JSON-RPC transport failed, trying simple transport...', 'PROXY');
-    logger.debug('JSON-RPC error:', 'PROXY', error);
+    logger.warn('⚠️  JSON-RPC transport failed, trying simple transport...', 'TRANSPORT_DETECT');
+    logger.debug('JSON-RPC error details:', 'TRANSPORT_DETECT', error);
     
     try {
-      const simpleInitRequest = { method: 'initialize' };
-      const initResponse = await wpRequest(simpleInitRequest, false); // Use simple format
+      // For simple transport, use the same enhanced params structure
+      const simpleRequestParams = {
+        method: 'initialize',
+        ...enhancedParams
+      };
+      
+      logger.info('Sending initialization message via Simple transport:', 'TRANSPORT_DETECT', {
+        method: simpleRequestParams.method,
+        hasParams: Object.keys(simpleRequestParams).length > 1,
+      });
+      logger.debug('Complete Simple init message:', 'TRANSPORT_DETECT', simpleRequestParams);
+      
+      const initResponse = await wpRequest(simpleRequestParams, false); // Use simple format
       init = initResponse as InitializeResult;
       transportType = 'simple';
-      logger.info('✅ Simple transport detected and working', 'PROXY');
+      
+      logger.info('✅ Simple transport detected and working', 'TRANSPORT_DETECT');
+      logger.debug('Simple initialization response:', 'TRANSPORT_DETECT', init);
     } catch (simpleError) {
-      logger.error('Both JSON-RPC and simple transports failed', 'PROXY', simpleError);
+      logger.error('❌ Both JSON-RPC and simple transports failed', 'TRANSPORT_DETECT', simpleError);
       throw new Error('Unable to establish connection with either transport type');
     }
   }

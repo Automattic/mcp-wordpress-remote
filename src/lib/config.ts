@@ -4,7 +4,7 @@ import { selectCallbackPort } from './port-utils.js';
 import { logger } from './utils.js';
 
 // Version constant - update this manually when releasing new versions
-export const MCP_WORDPRESS_REMOTE_VERSION = '0.2.17';
+export const MCP_WORDPRESS_REMOTE_VERSION = '0.2.18';
 
 /**
  * Centralized configuration for MCP WordPress Remote

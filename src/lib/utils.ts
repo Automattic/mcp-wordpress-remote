@@ -61,7 +61,9 @@ export function log(
   const logMessage = `${timestamp} [${levelName}] [${category}] ${message}${formattedArgs ? '\n' + formattedArgs : ''}\n`;
 
   // Log to stderr to avoid interfering with MCP JSON-RPC communication on stdout
-  process.stderr.write(logMessage);
+  if (process.env.LOG_TO_STDERR === 'true') {
+    process.stderr.write(logMessage);
+  }
 
   // Log to file only if LOG_FILE is provided
   if (process.env.LOG_FILE) {
