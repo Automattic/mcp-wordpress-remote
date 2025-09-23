@@ -47,18 +47,50 @@ export function createWrappedHandler(config: HandlerConfig, context: SessionCont
   const handler = createRequestHandler(config, context);
   
   return async (request: any) => {
-    logger.debug(`Received ${config.name} request`, 'MCP', request);
+    // Enhanced client message logging
+    logger.info(`📩 Client Message: ${config.name}`, 'CLIENT');
+    logger.info(`Request ID: ${request.id || 'none'} | Method: ${config.method}`, 'CLIENT');
+    
+    // Log request parameters in a structured way
+    if (request.params && Object.keys(request.params).length > 0) {
+      logger.info(`Request parameters:`, 'CLIENT', {
+        paramCount: Object.keys(request.params).length,
+        paramKeys: Object.keys(request.params),
+      });
+      logger.debug(`Full request parameters:`, 'CLIENT', request.params);
+    } else {
+      logger.info(`No request parameters`, 'CLIENT');
+    }
+    
+    // Log session context
     logger.debug(
-      `Adding session info - Session ID: ${context.sessionId}, MCP Request ID: ${request.id}`,
-      'SESSION'
+      `Session context - ID: ${context.sessionId || 'none'}, Transport: ${context.transportType || 'detecting'}, Counter: ${context.requestIdCounter}`,
+      'CLIENT'
     );
+    
+    // Log full request object at debug level for detailed debugging
+    logger.debug(`Complete client request object:`, 'CLIENT', request);
+    
+    const startTime = Date.now();
     
     try {
       const response = await handler(request);
-      logger.debug(`${config.name} response sent`, 'MCP');
+      const duration = Date.now() - startTime;
+      
+      logger.info(`✅ Client Response: ${config.name} completed in ${duration}ms`, 'CLIENT');
+      logger.debug(`Response sent to client:`, 'CLIENT', {
+        hasResponse: !!response,
+        responseKeys: response && typeof response === 'object' ? Object.keys(response) : 'primitive',
+      });
+      
       return response;
     } catch (error) {
-      logger.error(`Error handling ${config.name} request`, 'MCP', error);
+      const duration = Date.now() - startTime;
+      
+      logger.error(`❌ Client Error: ${config.name} failed after ${duration}ms`, 'CLIENT', {
+        error: error instanceof Error ? error.message : String(error),
+        requestId: request.id,
+      });
       
       // Only convert APIError to MCP error format for simple transport
       // JSON-RPC transport already returns properly formatted JSON-RPC errors

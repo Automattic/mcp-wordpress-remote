@@ -23,10 +23,31 @@ import {
   CompleteRequestSchema,
   ListRootsRequestSchema,
 } from './lib/mcp-types.js';
+import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 
 // Check Node.js version
 validateNodeVersion(18);
+
+/**
+ * Enhanced Client Message Logging
+ * 
+ * This proxy now includes comprehensive logging for all client messages at multiple levels:
+ * 
+ * 1. TRANSPORT level: Raw messages from the transport layer
+ * 2. CLIENT level: Processed messages with structured information  
+ * 3. TRANSPORT_DETECT level: Initialization and transport detection messages
+ * 
+ * Log levels:
+ * - INFO: Basic request/response information with emojis for easy scanning
+ * - DEBUG: Complete message objects and detailed debugging info
+ * - ERROR: Failed requests and transport errors
+ * 
+ * To control logging:
+ * - Set LOG_LEVEL=0 (ERROR), 1 (WARN), 2 (INFO), or 3 (DEBUG)
+ * - Set LOG_FILE=path/to/file.log to also log to a file
+ * - In development, DEBUG level is default; in production, INFO level is default
+ */
 
 
 async function WordPressProxy() {
@@ -73,6 +94,30 @@ async function WordPressProxy() {
   server.setRequestHandler(ListRootsRequestSchema, createWrappedHandler(HANDLER_CONFIGS.listRoots, sessionContext));
 
   const transport = new StdioServerTransport();
+  
+  transport.onmessage = (message) => {
+    const msg = message as unknown;
+    const method = typeof (msg as any)?.method === 'string' ? (msg as any).method : 'unknown';
+    const id = (msg as any)?.id ?? 'none';
+    const hasParams = Boolean((msg as any)?.params && typeof (msg as any).params === 'object' && Object.keys((msg as any).params).length);
+    
+    logger.info('📥 Raw client message received', 'TRANSPORT', {
+      method,
+      id,
+      hasParams,
+      messageType: method === 'unknown' ? 'response/notification' : 'request',
+    });
+    logger.debug('Complete raw message:', 'TRANSPORT', message);
+  };
+
+  transport.onerror = (error) => {
+    logger.error('❌ Transport error:', 'TRANSPORT', error);
+  };
+
+  transport.onclose = () => {
+    logger.info('🔌 Transport connection closed', 'TRANSPORT');
+  };
+  
   // Connect to the transport
   server
     .connect(transport)
