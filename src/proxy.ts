@@ -66,20 +66,71 @@ async function WordPressProxy() {
   // Create session context
   const sessionContext = createSessionContext();
 
-  // Detect transport type and initialize connection
-  const { initResult } = await detectTransportType(sessionContext);
-
+  // Create server with minimal default info (will be updated with actual WordPress info on first initialize)
   const server = new Server(
     {
-      name: initResult.serverInfo.name,
-      version: initResult.serverInfo.version,
+      name: 'WordPress MCP Remote Proxy',
+      version: '0.2.17',
     },
     {
-      capabilities: initResult.capabilities as any, // Type assertion to fix linter error
+      capabilities: {
+        tools: {},
+        resources: {},
+        prompts: {},
+        logging: {},
+        completions: {},
+      },
     }
   );
 
-  // Register all MCP request handlers using the factory
+  // Handle initialize request by forwarding client parameters to WordPress (only one call)
+  server.setRequestHandler(InitializeRequestSchema, async (request) => {
+    logger.info('📩 Client Initialize Request received', 'INIT');
+    logger.debug('Initialize request details:', 'INIT', request);
+    
+    try {
+      // Forward the client's initialize parameters to WordPress server (first and only call)
+      logger.info('🔄 Initializing WordPress connection with client parameters', 'INIT');
+      const { initResult } = await detectTransportType(sessionContext, request.params);
+      
+      // Return the WordPress server's initialize response
+      const wordpressInitResponse = {
+        protocolVersion: initResult.protocolVersion || '2025-06-18',
+        serverInfo: initResult.serverInfo,
+        capabilities: initResult.capabilities,
+        instructions: initResult.instructions || 'MCP WordPress Remote Proxy Server'
+      };
+      
+      logger.info('✅ Returning WordPress server initialize response', 'INIT');
+      logger.debug('Initialize response:', 'INIT', wordpressInitResponse);
+      
+      return wordpressInitResponse;
+    } catch (error) {
+      logger.error('❌ Failed to initialize WordPress connection with client parameters', 'INIT', error);
+      
+      // Return a basic fallback response
+      const fallbackResponse = {
+        protocolVersion: '2025-06-18',
+        serverInfo: {
+          name: 'WordPress MCP Remote Proxy',
+          version: '0.2.17',
+        },
+        capabilities: {
+          tools: {},
+          resources: {},
+          prompts: {},
+          logging: {},
+          completions: {},
+        },
+        instructions: 'MCP WordPress Remote Proxy Server (Connection Failed)'
+      };
+      
+      logger.warn('⚠️ Using fallback initialize response', 'INIT');
+      return fallbackResponse;
+    }
+  });
+
+  // Register all other MCP request handlers using the factory
   server.setRequestHandler(ListToolsRequestSchema, createWrappedHandler(HANDLER_CONFIGS.listTools, sessionContext));
   server.setRequestHandler(CallToolRequestSchema, createWrappedHandler(HANDLER_CONFIGS.callTool, sessionContext));
   server.setRequestHandler(ListResourcesRequestSchema, createWrappedHandler(HANDLER_CONFIGS.listResources, sessionContext));

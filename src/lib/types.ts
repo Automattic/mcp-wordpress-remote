@@ -24,11 +24,15 @@ export interface WordPressConfig {
 
 /**
  * WordPress API initialization result
+ * Based on MCP 2025-06-18 InitializeResult schema
  */
 export interface InitializeResult {
+  protocolVersion: string;
   serverInfo: {
     name: string;
     version: string;
+    title?: string;
   };
   capabilities: Record<string, any>;
+  instructions?: string;
 }
