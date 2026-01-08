@@ -105,7 +105,7 @@ Custom headers are included in:
 
 ## WordPress MCP Plugin
 
-You need to install the [wordpress-mcp](https://github.com/Automattic/wordpress-mcp) plugin on your WordPress website and enable MCP Functionality in Settings > MCP Settings.
+You need to install the [wordpress-mcp](https://github.com/WordPress/mcp-adapter) plugin on your WordPress website and enable MCP Functionality in Settings > MCP Settings.
 
 ## Authentication Methods
 
