@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger, LogLevel } from './utils.js';
 import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from './config.js';
+import { proxyFetch } from './fetch-utils.js';
 import { WPTokens, AuthError, APIError } from './oauth-types.js';
 import {
   getValidTokens,
@@ -325,7 +326,7 @@ export async function wpRequest(
     logger.api('Sending request to WordPress API...');
     logger.debug(`Request URL: ${url}`, 'API');
     logger.debug(`Request method: ${method}`, 'API');
-    const response = await fetch(url, fetchOptions);
+    const response = await proxyFetch(url, fetchOptions);
     logger.debug(`Response status: ${response.status}`, 'API');
 
     // Handle error responses
