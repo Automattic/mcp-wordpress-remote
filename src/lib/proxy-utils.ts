@@ -48,7 +48,7 @@ function detectMacOsPac(): string | null {
 /**
  * Check if proxy URL is a SOCKS proxy (case-insensitive)
  */
-function isSocksProxy(url: string): boolean {
+export function isSocksProxy(url: string): boolean {
   return url.toLowerCase().startsWith('socks');
 }
 
@@ -60,7 +60,7 @@ function isSocksProxy(url: string): boolean {
  * - Exact hostname matches (e.g., "example.com")
  * - Domain suffix matches (e.g., ".example.com" or "example.com" matches "api.example.com")
  */
-function shouldBypassProxy(targetUrl: string): boolean {
+export function shouldBypassProxy(targetUrl: string): boolean {
   const noProxy = process.env.NO_PROXY || process.env.no_proxy;
   if (!noProxy) return false;
 
@@ -92,7 +92,7 @@ function shouldBypassProxy(targetUrl: string): boolean {
 /**
  * Detect proxy from environment variables (cross-platform)
  */
-function detectEnvProxy(): { url: string; type: 'socks' | 'http' } | null {
+export function detectEnvProxy(): { url: string; type: 'socks' | 'http' } | null {
   // Check SOCKS proxy first
   const socksProxy = process.env.SOCKS_PROXY || process.env.socks_proxy;
   if (socksProxy) {
