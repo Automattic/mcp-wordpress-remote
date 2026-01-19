@@ -53,6 +53,19 @@ export function isSocksProxy(url: string): boolean {
 }
 
 /**
+ * Redact credentials from proxy URL for safe logging
+ */
+function sanitizeProxyUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.password) parsed.password = '***';
+    return parsed.toString();
+  } catch {
+    return url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@');
+  }
+}
+
+/**
  * Check if URL should bypass proxy based on NO_PROXY/no_proxy env var
  *
  * Supports:
@@ -159,7 +172,7 @@ async function doInitializeProxy(): Promise<void> {
         type: 'pac',
         pacResolver: resolver,
       };
-      logger.info(`PAC proxy initialized from ${pacUrl}`, 'PROXY');
+      logger.info(`PAC proxy initialized from ${sanitizeProxyUrl(pacUrl)}`, 'PROXY');
       return;
     } catch (error) {
       logger.error(`Failed to initialize PAC proxy: ${error}`, 'PROXY');
@@ -170,7 +183,7 @@ async function doInitializeProxy(): Promise<void> {
   const envProxy = detectEnvProxy();
   if (envProxy) {
     proxyConfig = { type: 'env', envProxy };
-    logger.info(`Proxy configured from environment: ${envProxy.url}`, 'PROXY');
+    logger.info(`Proxy configured from environment: ${sanitizeProxyUrl(envProxy.url)}`, 'PROXY');
     return;
   }
 
@@ -214,7 +227,7 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
         const socksMatch = directive.match(/SOCKS5?\s+(\S+):(\d+)/i);
         if (socksMatch) {
           const proxyUrl = `socks5://${socksMatch[1]}:${socksMatch[2]}`;
-          logger.debug(`PAC returned SOCKS proxy for ${url}: ${proxyUrl}`, 'PROXY');
+          logger.debug(`PAC returned SOCKS proxy for ${url}: ${sanitizeProxyUrl(proxyUrl)}`, 'PROXY');
           return new SocksProxyAgent(proxyUrl);
         }
 
@@ -222,7 +235,7 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
         const proxyMatch = directive.match(/PROXY\s+(\S+):(\d+)/i);
         if (proxyMatch) {
           const proxyUrl = `http://${proxyMatch[1]}:${proxyMatch[2]}`;
-          logger.debug(`PAC returned HTTP proxy for ${url}: ${proxyUrl}`, 'PROXY');
+          logger.debug(`PAC returned HTTP proxy for ${url}: ${sanitizeProxyUrl(proxyUrl)}`, 'PROXY');
           return new HttpsProxyAgent(proxyUrl);
         }
       }
@@ -238,7 +251,7 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
   if (proxyConfig.type === 'env' && proxyConfig.envProxy) {
     const { url: proxyUrl, type } = proxyConfig.envProxy;
     try {
-      logger.debug(`Using env proxy ${proxyUrl} for ${url}`, 'PROXY');
+      logger.debug(`Using env proxy ${sanitizeProxyUrl(proxyUrl)} for ${url}`, 'PROXY');
       return type === 'socks'
         ? new SocksProxyAgent(proxyUrl)
         : new HttpsProxyAgent(proxyUrl);
