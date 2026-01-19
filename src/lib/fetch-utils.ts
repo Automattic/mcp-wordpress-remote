@@ -2,12 +2,21 @@
  * Fetch API utilities for MCP WordPress Remote
  *
  * Provides fetch polyfill setup for Node.js environments that don't have native fetch
- * and proxy-aware fetch for routing through system proxies (PAC files, SSH tunnels, etc.)
+ * and proxy-aware fetch for routing through system proxies (PAC files, env-based SOCKS/HTTP proxies)
  */
 
+import type { RequestInit as NodeFetchRequestInit } from 'node-fetch';
+import type { Agent } from 'http';
 import { logger } from './utils.js';
 import { getConfig } from './config.js';
 import { initializeProxy, getAgentForUrl, isProxyConfigured, getProxyType } from './proxy-utils.js';
+
+/**
+ * Extended RequestInit that includes the agent property for proxy support
+ */
+interface ProxyRequestInit extends NodeFetchRequestInit {
+  agent?: Agent;
+}
 
 /**
  * Setup fetch polyfill for Node.js 18+ compatibility
@@ -65,7 +74,7 @@ export async function proxyFetch(url: string, init?: RequestInit): Promise<Respo
   if (agent) {
     // Use node-fetch with agent for SOCKS/HTTP proxy support
     const nodeFetch = (await import('node-fetch')).default;
-    return nodeFetch(url, { ...init, agent } as any) as unknown as Response;
+    return nodeFetch(url, { ...init, agent } as ProxyRequestInit) as unknown as Response;
   }
 
   // Direct connection (no proxy configured or PAC returned DIRECT)

@@ -23,6 +23,7 @@ interface ProxyConfig {
 }
 
 let proxyConfig: ProxyConfig = { type: 'none' };
+let initializationPromise: Promise<void> | null = null;
 
 /**
  * Detect PAC URL from macOS system proxy settings
@@ -31,7 +32,7 @@ function detectMacOsPac(): string | null {
   if (process.platform !== 'darwin') return null;
 
   try {
-    const output = execSync('scutil --proxy', { encoding: 'utf-8' });
+    const output = execSync('scutil --proxy', { encoding: 'utf-8', timeout: 3000 });
     const pacEnabled = output.match(/ProxyAutoConfigEnable\s*:\s*(\d)/)?.[1] === '1';
     const pacUrl = output.match(/ProxyAutoConfigURLString\s*:\s*(\S+)/)?.[1];
 
@@ -42,6 +43,50 @@ function detectMacOsPac(): string | null {
     // scutil failed or not available
   }
   return null;
+}
+
+/**
+ * Check if proxy URL is a SOCKS proxy (case-insensitive)
+ */
+function isSocksProxy(url: string): boolean {
+  return url.toLowerCase().startsWith('socks');
+}
+
+/**
+ * Check if URL should bypass proxy based on NO_PROXY/no_proxy env var
+ *
+ * Supports:
+ * - Single "*" disables proxying for all destinations
+ * - Exact hostname matches (e.g., "example.com")
+ * - Domain suffix matches (e.g., ".example.com" or "example.com" matches "api.example.com")
+ */
+function shouldBypassProxy(targetUrl: string): boolean {
+  const noProxy = process.env.NO_PROXY || process.env.no_proxy;
+  if (!noProxy) return false;
+
+  let hostname: string;
+  try {
+    hostname = new URL(targetUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  const rules = noProxy
+    .split(',')
+    .map((r) => r.trim().toLowerCase())
+    .filter((r) => r.length > 0);
+
+  for (const rule of rules) {
+    if (rule === '*') return true;
+    if (hostname === rule) return true;
+    if (
+      (rule.startsWith('.') && hostname.endsWith(rule)) ||
+      (!rule.startsWith('.') && hostname.endsWith(`.${rule}`))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -57,17 +102,17 @@ function detectEnvProxy(): { url: string; type: 'socks' | 'http' } | null {
   // Check standard HTTP proxy variables
   const httpsProxy = process.env.HTTPS_PROXY || process.env.https_proxy;
   if (httpsProxy) {
-    return { url: httpsProxy, type: httpsProxy.startsWith('socks') ? 'socks' : 'http' };
+    return { url: httpsProxy, type: isSocksProxy(httpsProxy) ? 'socks' : 'http' };
   }
 
   const allProxy = process.env.ALL_PROXY || process.env.all_proxy;
   if (allProxy) {
-    return { url: allProxy, type: allProxy.startsWith('socks') ? 'socks' : 'http' };
+    return { url: allProxy, type: isSocksProxy(allProxy) ? 'socks' : 'http' };
   }
 
   const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy;
   if (httpProxy) {
-    return { url: httpProxy, type: httpProxy.startsWith('socks') ? 'socks' : 'http' };
+    return { url: httpProxy, type: isSocksProxy(httpProxy) ? 'socks' : 'http' };
   }
 
   return null;
@@ -75,8 +120,22 @@ function detectEnvProxy(): { url: string; type: 'socks' | 'http' } | null {
 
 /**
  * Initialize proxy configuration (call once at startup)
+ * Guards against concurrent initialization calls
  */
 export async function initializeProxy(): Promise<void> {
+  // Return existing promise if initialization is already in progress
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+
+  initializationPromise = doInitializeProxy();
+  return initializationPromise;
+}
+
+/**
+ * Internal initialization logic
+ */
+async function doInitializeProxy(): Promise<void> {
   // 1. Try macOS PAC file first
   const pacUrl = detectMacOsPac();
   if (pacUrl) {
@@ -100,7 +159,7 @@ export async function initializeProxy(): Promise<void> {
       logger.info(`PAC proxy initialized from ${pacUrl}`, 'PROXY');
       return;
     } catch (error) {
-      logger.warn(`Failed to initialize PAC proxy: ${error}`, 'PROXY');
+      logger.error(`Failed to initialize PAC proxy: ${error}`, 'PROXY');
     }
   }
 
@@ -125,33 +184,47 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
     return undefined;
   }
 
+  // Check NO_PROXY before using proxy
+  if (shouldBypassProxy(url)) {
+    logger.debug(`Bypassing proxy for ${url} (matches NO_PROXY)`, 'PROXY');
+    return undefined;
+  }
+
   // PAC-based proxy (macOS)
+  // PAC may return multiple directives separated by semicolons,
+  // e.g. "PROXY p1:8080; PROXY p2:8080; DIRECT"
   if (proxyConfig.type === 'pac' && proxyConfig.pacResolver) {
     try {
       const result = await proxyConfig.pacResolver(url);
+      const directives = result.split(';');
 
-      if (result === 'DIRECT') {
-        logger.debug(`PAC returned DIRECT for ${url}`, 'PROXY');
-        return undefined;
+      for (const rawDirective of directives) {
+        const directive = rawDirective.trim();
+        if (!directive) continue;
+
+        if (directive.toUpperCase() === 'DIRECT') {
+          logger.debug(`PAC returned DIRECT for ${url}`, 'PROXY');
+          return undefined;
+        }
+
+        // Parse "SOCKS host:port" or "SOCKS5 host:port" (case-insensitive)
+        const socksMatch = directive.match(/SOCKS5?\s+(\S+):(\d+)/i);
+        if (socksMatch) {
+          const proxyUrl = `socks5://${socksMatch[1]}:${socksMatch[2]}`;
+          logger.debug(`PAC returned SOCKS proxy for ${url}: ${proxyUrl}`, 'PROXY');
+          return new SocksProxyAgent(proxyUrl);
+        }
+
+        // Parse "PROXY host:port" (case-insensitive)
+        const proxyMatch = directive.match(/PROXY\s+(\S+):(\d+)/i);
+        if (proxyMatch) {
+          const proxyUrl = `http://${proxyMatch[1]}:${proxyMatch[2]}`;
+          logger.debug(`PAC returned HTTP proxy for ${url}: ${proxyUrl}`, 'PROXY');
+          return new HttpsProxyAgent(proxyUrl);
+        }
       }
 
-      // Parse "SOCKS host:port" or "SOCKS5 host:port"
-      const socksMatch = result.match(/SOCKS5?\s+(\S+):(\d+)/);
-      if (socksMatch) {
-        const proxyUrl = `socks5://${socksMatch[1]}:${socksMatch[2]}`;
-        logger.debug(`PAC returned SOCKS proxy for ${url}: ${proxyUrl}`, 'PROXY');
-        return new SocksProxyAgent(proxyUrl);
-      }
-
-      // Parse "PROXY host:port"
-      const proxyMatch = result.match(/PROXY\s+(\S+):(\d+)/);
-      if (proxyMatch) {
-        const proxyUrl = `http://${proxyMatch[1]}:${proxyMatch[2]}`;
-        logger.debug(`PAC returned HTTP proxy for ${url}: ${proxyUrl}`, 'PROXY');
-        return new HttpsProxyAgent(proxyUrl);
-      }
-
-      logger.debug(`PAC returned unknown result for ${url}: ${result}`, 'PROXY');
+      logger.debug(`PAC returned no usable proxy for ${url}: ${result}`, 'PROXY');
     } catch (error) {
       logger.warn(`PAC evaluation failed for ${url}: ${error}`, 'PROXY');
     }
@@ -161,10 +234,15 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
   // Environment variable proxy (all platforms)
   if (proxyConfig.type === 'env' && proxyConfig.envProxy) {
     const { url: proxyUrl, type } = proxyConfig.envProxy;
-    logger.debug(`Using env proxy ${proxyUrl} for ${url}`, 'PROXY');
-    return type === 'socks'
-      ? new SocksProxyAgent(proxyUrl)
-      : new HttpsProxyAgent(proxyUrl);
+    try {
+      logger.debug(`Using env proxy ${proxyUrl} for ${url}`, 'PROXY');
+      return type === 'socks'
+        ? new SocksProxyAgent(proxyUrl)
+        : new HttpsProxyAgent(proxyUrl);
+    } catch (error) {
+      logger.error(`Invalid proxy URL "${proxyUrl}": ${error}`, 'PROXY');
+      return undefined;
+    }
   }
 
   return undefined;

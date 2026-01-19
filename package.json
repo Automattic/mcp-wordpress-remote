@@ -65,7 +65,6 @@
     "node-fetch": "^3.3.2",
     "open": "^10.0.0",
     "pac-resolver": "^7.0.1",
-    "quickjs-emscripten": "^0.31.0",
     "socks-proxy-agent": "^8.0.5"
   },
   "devDependencies": {
