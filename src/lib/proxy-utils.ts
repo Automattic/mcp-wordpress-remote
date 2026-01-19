@@ -128,7 +128,10 @@ export async function initializeProxy(): Promise<void> {
     return initializationPromise;
   }
 
-  initializationPromise = doInitializeProxy();
+  initializationPromise = doInitializeProxy().catch((error) => {
+    initializationPromise = null;
+    throw error;
+  });
   return initializationPromise;
 }
 
