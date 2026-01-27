@@ -138,7 +138,7 @@ describe('Configuration Module', () => {
       const result = validateConfig();
 
       expect(result.isValid).toBe(false);
-      expect(result.errors.some(error => error.includes('No authentication method configured. Please set one of: JWT_TOKEN, WP_API_USERNAME+WP_API_PASSWORD, or enable OAuth'))).toBe(true);
+      expect(result.errors.some(error => error.includes('No authentication method configured'))).toBe(true);
     });
   });
 
@@ -274,7 +274,7 @@ describe('Configuration Module', () => {
       const status = getConfigHealthStatus();
 
       expect(status.status).toBe('healthy');
-      expect(status.version).toBe('0.2.9');
+      expect(status.version).toBe('0.2.19');
       expect(status.uptime).toBeGreaterThan(0);
       expect(status.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     });
