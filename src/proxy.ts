@@ -9,6 +9,7 @@ import { setupFetchPolyfill } from './lib/fetch-utils.js';
 import { detectTransportType } from './lib/transport-detection.js';
 import { createSessionContext } from './lib/session-utils.js';
 import { createWrappedHandler, HANDLER_CONFIGS } from './lib/request-handler-factory.js';
+import { MCP_WORDPRESS_REMOTE_VERSION } from './lib/config.js';
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -70,7 +71,7 @@ async function WordPressProxy() {
   const server = new Server(
     {
       name: 'WordPress MCP Remote Proxy',
-      version: '0.2.17',
+      version: MCP_WORDPRESS_REMOTE_VERSION,
     },
     {
       capabilities: {
@@ -113,7 +114,7 @@ async function WordPressProxy() {
         protocolVersion: '2025-06-18',
         serverInfo: {
           name: 'WordPress MCP Remote Proxy',
-          version: '0.2.17',
+          version: MCP_WORDPRESS_REMOTE_VERSION,
         },
         capabilities: {
           tools: {},

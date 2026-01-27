@@ -50,7 +50,7 @@ describe('Utils Module', () => {
     it('should export version constant', async () => {
       const { MCP_WORDPRESS_REMOTE_VERSION } = await import('../../src/lib/utils.js');
       
-      expect(MCP_WORDPRESS_REMOTE_VERSION).toBe('0.2.1');
+      expect(MCP_WORDPRESS_REMOTE_VERSION).toBe('0.2.19');
     });
   });
 
