@@ -64,6 +64,9 @@ export const CONFIG = {
 
   // Environment
   NODE_ENV: process.env.NODE_ENV || 'development',
+
+  // Proxy Configuration
+  USE_SYSTEM_PROXY: process.env.USE_SYSTEM_PROXY === 'true', // Enable system proxy detection (PAC files, env vars)
 } as const;
 
 /**
@@ -132,6 +135,9 @@ export const getConfig = () => ({
 
   /** Current environment */
   nodeEnv: CONFIG.NODE_ENV,
+
+  /** Whether to use system proxy (PAC files on macOS, env vars on all platforms) */
+  useSystemProxy: CONFIG.USE_SYSTEM_PROXY,
 });
 
 /**
@@ -177,7 +183,7 @@ export function parseCustomHeaders(customHeadersString: string): Record<string, 
     // Parse comma-separated format
     const headers: Record<string, string> = {};
     const pairs = customHeadersString.split(',');
-    
+
     for (const pair of pairs) {
       const colonIndex = pair.indexOf(':');
       if (colonIndex > 0) {

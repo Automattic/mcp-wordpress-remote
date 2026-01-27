@@ -15,6 +15,7 @@ import {
 } from './oauth-types.js';
 import { logger } from './utils.js';
 import { getCustomHeaders } from './config.js';
+import { proxyFetch } from './fetch-utils.js';
 
 /**
  * Generate PKCE code verifier and challenge
@@ -75,7 +76,7 @@ export async function discoverAuthorizationServerMetadata(
 
     // Include custom headers in discovery requests
     const customHeaders = getCustomHeaders();
-    const response = await fetch(metadataUrl.toString(), {
+    const response = await proxyFetch(metadataUrl.toString(), {
       headers: {
         'Accept': 'application/json',
         ...customHeaders,
@@ -126,7 +127,7 @@ export async function discoverProtectedResourceMetadata(
 
     // Include custom headers in discovery requests
     const customHeaders = getCustomHeaders();
-    const response = await fetch(metadataUrl.toString(), {
+    const response = await proxyFetch(metadataUrl.toString(), {
       headers: {
         'Accept': 'application/json',
         ...customHeaders,
@@ -215,7 +216,7 @@ export async function registerDynamicClient(
 
     // Include custom headers in registration requests
     const customHeaders = getCustomHeaders();
-    const response = await fetch(registrationEndpoint, {
+    const response = await proxyFetch(registrationEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -289,7 +290,7 @@ export async function exchangeAuthorizationCode(
 
     // Include custom headers in token exchange requests
     const customHeaders = getCustomHeaders();
-    const response = await fetch(tokenEndpoint, {
+    const response = await proxyFetch(tokenEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',

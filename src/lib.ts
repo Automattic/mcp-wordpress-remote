@@ -32,3 +32,9 @@ export {
 
 // Export version
 export { MCP_WORDPRESS_REMOTE_VERSION } from './lib/utils.js';
+
+// Export fetch utilities (including proxy support)
+export { setupFetchPolyfill, proxyFetch, getProxyInfo, isFetchAvailable, getFetchInfo } from './lib/fetch-utils.js';
+
+// Export proxy utilities
+export { initializeProxy, isProxyConfigured, getProxyType, getAgentForUrl } from './lib/proxy-utils.js';
