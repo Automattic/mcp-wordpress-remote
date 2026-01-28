@@ -50,6 +50,7 @@ Add to your MCP client configuration (e.g., Claude Desktop's `claude_desktop_con
 You can add custom headers to all API requests using the `CUSTOM_HEADERS` environment variable. This is useful for API keys, custom authentication, or other header requirements.
 
 #### JSON Format (Recommended):
+
 ```json
 {
   "mcpServers": {
@@ -66,6 +67,7 @@ You can add custom headers to all API requests using the `CUSTOM_HEADERS` enviro
 ```
 
 #### Comma-Separated Format:
+
 ```json
 {
   "mcpServers": {
@@ -82,6 +84,7 @@ You can add custom headers to all API requests using the `CUSTOM_HEADERS` enviro
 ```
 
 #### Command Line Usage:
+
 ```bash
 CUSTOM_HEADERS='{"X-MCP-API-Key": "wc_mcp_FaQduhQcW0mfVaZgP3yaaqDuXaZ3mw7j"}' \
 WP_API_URL="https://your-site.com" \
@@ -89,6 +92,7 @@ npx @automattic/mcp-wordpress-remote
 ```
 
 Custom headers are included in:
+
 - All WordPress API requests
 - OAuth discovery requests
 - OAuth token exchange requests
@@ -129,8 +133,6 @@ OAuth 2.1 provides the most secure and user-friendly experience with full MCP Au
   }
 }
 ```
-
-
 
 **MCP Authorization Specification Features:**
 
@@ -240,34 +242,32 @@ For WooCommerce-specific tools and reports:
 
 ### Environment Variables
 
-| Variable                     | Description                        | Default              | Required |
-| ---------------------------- | ---------------------------------- | -------------------- | -------- |
-| `WP_API_URL`                 | WordPress site URL                 | -                    | ✅       |
-| `OAUTH_ENABLED`              | Enable OAuth authentication        | `true`               | -        |
-| `OAUTH_CALLBACK_PORT`        | OAuth callback port                | `7665`               | -        |
-| `OAUTH_HOST`                 | OAuth callback hostname            | `127.0.0.1`          | -        |
-| `WP_OAUTH_CLIENT_ID`         | Custom OAuth client ID             | -                    | -        |
-| **OAuth Endpoints**          |                                    |                      |          |
-| `OAUTH_AUTHORIZE_ENDPOINT`   | OAuth authorization endpoint       | -                    | ✅ (for custom OAuth) |
-| `OAUTH_TOKEN_ENDPOINT`       | OAuth token endpoint               | -                    | ✅ (for custom OAuth) |
-| `OAUTH_AUTHENTICATE_ENDPOINT`| OAuth authenticate endpoint       | -                    | -        |
-| **MCP OAuth 2.1 Settings**   |                                    |                      |          |
-| `OAUTH_FLOW_TYPE`            | OAuth flow type (authorization_code or implicit) | `authorization_code` | -        |
-| `OAUTH_USE_PKCE`             | Use PKCE (required for OAuth 2.1)  | `true`               | -        |
-| `OAUTH_DYNAMIC_REGISTRATION` | Enable dynamic client registration | `true`               | -        |
-| `OAUTH_RESOURCE_INDICATOR`   | Use resource indicators (RFC 8707) | `true`               | -        |
-| **Configuration**            |                                    |                      |          |
-| `WP_MCP_CONFIG_DIR`          | Config directory override          | `~/.mcp-auth`        | -        |
-| `LOG_FILE`                   | Log file path                      | -                    | -        |
-| `LOG_LEVEL`                  | Log level (0-3)                    | `2`                  | -        |
-| **Legacy Authentication**    |                                    |                      |          |
-| `JWT_TOKEN`                  | JWT token for authentication       | -                    | -        |
-| `WP_API_USERNAME`            | WordPress username (legacy)        | -                    | -        |
-| `WP_API_PASSWORD`            | WordPress app password (legacy)    | -                    | -        |
-| `WOO_CUSTOMER_KEY`           | WooCommerce consumer key           | -                    | -        |
-| `WOO_CUSTOMER_SECRET`        | WooCommerce consumer secret        | -                    | -        |
-
-
+| Variable                      | Description                                      | Default              | Required              |
+| ----------------------------- | ------------------------------------------------ | -------------------- | --------------------- |
+| `WP_API_URL`                  | WordPress site URL                               | -                    | ✅                    |
+| `OAUTH_ENABLED`               | Enable OAuth authentication                      | `true`               | -                     |
+| `OAUTH_CALLBACK_PORT`         | OAuth callback port                              | `7665`               | -                     |
+| `OAUTH_HOST`                  | OAuth callback hostname                          | `127.0.0.1`          | -                     |
+| `WP_OAUTH_CLIENT_ID`          | Custom OAuth client ID                           | -                    | -                     |
+| **OAuth Endpoints**           |                                                  |                      |                       |
+| `OAUTH_AUTHORIZE_ENDPOINT`    | OAuth authorization endpoint                     | -                    | ✅ (for custom OAuth) |
+| `OAUTH_TOKEN_ENDPOINT`        | OAuth token endpoint                             | -                    | ✅ (for custom OAuth) |
+| `OAUTH_AUTHENTICATE_ENDPOINT` | OAuth authenticate endpoint                      | -                    | -                     |
+| **MCP OAuth 2.1 Settings**    |                                                  |                      |                       |
+| `OAUTH_FLOW_TYPE`             | OAuth flow type (authorization_code or implicit) | `authorization_code` | -                     |
+| `OAUTH_USE_PKCE`              | Use PKCE (required for OAuth 2.1)                | `true`               | -                     |
+| `OAUTH_DYNAMIC_REGISTRATION`  | Enable dynamic client registration               | `true`               | -                     |
+| `OAUTH_RESOURCE_INDICATOR`    | Use resource indicators (RFC 8707)               | `true`               | -                     |
+| **Configuration**             |                                                  |                      |                       |
+| `WP_MCP_CONFIG_DIR`           | Config directory override                        | `~/.mcp-auth`        | -                     |
+| `LOG_FILE`                    | Log file path                                    | -                    | -                     |
+| `LOG_LEVEL`                   | Log level (0-3)                                  | `2`                  | -                     |
+| **Legacy Authentication**     |                                                  |                      |                       |
+| `JWT_TOKEN`                   | JWT token for authentication                     | -                    | -                     |
+| `WP_API_USERNAME`             | WordPress username (legacy)                      | -                    | -                     |
+| `WP_API_PASSWORD`             | WordPress app password (legacy)                  | -                    | -                     |
+| `WOO_CUSTOMER_KEY`            | WooCommerce consumer key                         | -                    | -                     |
+| `WOO_CUSTOMER_SECRET`         | WooCommerce consumer secret                      | -                    | -                     |
 
 ### Disable OAuth
 
