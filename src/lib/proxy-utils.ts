@@ -3,6 +3,7 @@
  *
  * Supports:
  * - macOS: Automatic PAC file detection from system proxy settings
+ * - macOS: System SOCKS proxy detection (AutoProxxy Tunnel All Traffic)
  * - All platforms: Environment variables (SOCKS_PROXY, HTTPS_PROXY, etc.)
  */
 
@@ -25,20 +26,32 @@ interface ProxyConfig {
 let proxyConfig: ProxyConfig = { type: 'none' };
 let initializationPromise: Promise<void> | null = null;
 
+interface MacOsProxyInfo {
+  pacUrl: string | null;
+  socks: { host: string; port: string } | null;
+}
+
 /**
- * Detect PAC URL from macOS system proxy settings
+ * Parse macOS system proxy settings from a single scutil --proxy call.
+ * Returns PAC URL and SOCKS proxy info if enabled.
  */
-function detectMacOsPac(): string | null {
+function detectMacOsProxy(): MacOsProxyInfo | null {
   if (process.platform !== 'darwin') return null;
 
   try {
     const output = execSync('scutil --proxy', { encoding: 'utf-8', timeout: 3000 });
+
     const pacEnabled = output.match(/ProxyAutoConfigEnable\s*:\s*(\d)/)?.[1] === '1';
     const pacUrl = output.match(/ProxyAutoConfigURLString\s*:\s*(\S+)/)?.[1];
 
-    if (pacEnabled && pacUrl) {
-      return pacUrl;
-    }
+    const socksEnabled = output.match(/SOCKSEnable\s*:\s*(\d)/)?.[1] === '1';
+    const socksHost = output.match(/SOCKSProxy\s*:\s*(\S+)/)?.[1];
+    const socksPort = output.match(/SOCKSPort\s*:\s*(\d+)/)?.[1];
+
+    return {
+      pacUrl: pacEnabled && pacUrl ? pacUrl : null,
+      socks: socksEnabled && socksHost && socksPort ? { host: socksHost, port: socksPort } : null,
+    };
   } catch {
     // scutil failed or not available
   }
@@ -152,12 +165,14 @@ export async function initializeProxy(): Promise<void> {
  * Internal initialization logic
  */
 async function doInitializeProxy(): Promise<void> {
-  // 1. Try macOS PAC file first
-  const pacUrl = detectMacOsPac();
-  if (pacUrl) {
+  // 1. Try macOS system proxy (single scutil call for both PAC and SOCKS)
+  const macProxy = detectMacOsProxy();
+
+  // 1a. PAC file
+  if (macProxy?.pacUrl) {
     try {
       // Fetch PAC file directly (not through proxy)
-      const response = await fetch(pacUrl);
+      const response = await fetch(macProxy.pacUrl);
       const pacScript = await response.text();
 
       // Dynamic import for PAC resolver (has WASM dependencies)
@@ -172,11 +187,21 @@ async function doInitializeProxy(): Promise<void> {
         type: 'pac',
         pacResolver: resolver,
       };
-      logger.info(`PAC proxy initialized from ${sanitizeProxyUrl(pacUrl)}`, 'PROXY');
+      logger.info(`PAC proxy initialized from ${sanitizeProxyUrl(macProxy.pacUrl)}`, 'PROXY');
       return;
     } catch (error) {
       logger.error(`Failed to initialize PAC proxy: ${error}`, 'PROXY');
     }
+  }
+
+  // 1b. SOCKS proxy (e.g. AutoProxxy "Tunnel All Traffic")
+  if (macProxy?.socks) {
+    const { host, port } = macProxy.socks;
+    const bracketedHost = host.includes(':') ? `[${host}]` : host;
+    const socksUrl = `socks5://${bracketedHost}:${port}`;
+    proxyConfig = { type: 'env', envProxy: { url: socksUrl, type: 'socks' } };
+    logger.info(`System SOCKS proxy configured: ${sanitizeProxyUrl(socksUrl)}`, 'PROXY');
+    return;
   }
 
   // 2. Try environment variables (all platforms)
