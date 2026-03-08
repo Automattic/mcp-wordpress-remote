@@ -1,6 +1,6 @@
 /**
  * Session and Request Utilities for MCP WordPress Remote
- * 
+ *
  * Provides utilities for session management and request preparation
  */
 
@@ -14,13 +14,20 @@ export interface SessionContext {
   sessionId: string | null;
   requestIdCounter: number;
   transportType: TransportType;
+  /** @internal Managed by resolveInit/waitForInit — do not access directly. */
+  _init: {
+    ready: Promise<void>;
+    resolve: () => void;
+    settled: boolean;
+    failed: boolean;
+  };
 }
 
 /**
  * Add session information to WordPress requests and format as JSON-RPC
  */
 export function addSessionInfo(
-  wpRequestParams: WPRequestParams, 
+  wpRequestParams: WPRequestParams,
   mcpRequest: MCPRequest,
   context: SessionContext
 ) {
@@ -55,7 +62,7 @@ export function addSessionInfo(
  * Prepare request based on transport type
  */
 export function prepareRequest(
-  wpRequestParams: WPRequestParams, 
+  wpRequestParams: WPRequestParams,
   mcpRequest: MCPRequest,
   context: SessionContext
 ) {
@@ -72,9 +79,60 @@ export function prepareRequest(
  * Create a new session context
  */
 export function createSessionContext(): SessionContext {
+  let resolve: () => void;
+  const ready = new Promise<void>(r => { resolve = r; });
+
   return {
     sessionId: null,
     requestIdCounter: 0,
     transportType: null,
+    _init: {
+      ready,
+      resolve: resolve!,
+      settled: false,
+      failed: false,
+    },
   };
+}
+
+/**
+ * Signal that initialization completed (success or failure).
+ * Unblocks all handlers waiting on waitForInit.
+ */
+export function resolveInit(context: SessionContext, failed: boolean): void {
+  if (context._init.settled) return;
+  context._init.failed = failed;
+  context._init.settled = true;
+  context._init.resolve();
+}
+
+/** Default timeout for waiting on init (30s matches the MCP SDK's default request timeout). */
+const INIT_TIMEOUT_MS = 30_000;
+
+/**
+ * Wait for initialization to complete before handling a request.
+ * Returns true if the connection is ready, false if init failed or timed out.
+ */
+export type InitResult = { ready: true } | { ready: false; reason: 'failed' | 'timeout' };
+
+export async function waitForInit(context: SessionContext, timeoutMs = INIT_TIMEOUT_MS): Promise<InitResult> {
+  // Fast path: init already settled, no async work needed
+  if (context._init.settled) {
+    return context._init.failed ? { ready: false, reason: 'failed' } : { ready: true };
+  }
+
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<'timeout'>(resolve => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+
+  const result = await Promise.race([context._init.ready.then(() => 'ready' as const), timeout]);
+  clearTimeout(timer!);
+
+  if (result === 'timeout') {
+    logger.error('Timed out waiting for initialization to complete', 'INIT');
+    return { ready: false, reason: 'timeout' };
+  }
+
+  return context._init.failed ? { ready: false, reason: 'failed' } : { ready: true };
 }

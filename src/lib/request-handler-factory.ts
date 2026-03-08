@@ -8,7 +8,7 @@ import { logger } from './utils.js';
 import { wpRequest } from './wordpress-api.js';
 import { isAPIError } from './oauth-types.js';
 import { convertAPIErrorToMcpError } from './error-utils.js';
-import { prepareRequest, SessionContext } from './session-utils.js';
+import { prepareRequest, waitForInit, SessionContext } from './session-utils.js';
 import { WPRequestParams } from './mcp-types.js';
 
 /**
@@ -26,16 +26,23 @@ export interface HandlerConfig {
 export function createRequestHandler(config: HandlerConfig, context: SessionContext) {
   return async (request: any) => {
     logger.debug(`Processing ${config.name}Request`, 'MCP');
-    
+
+    // Wait for transport detection to complete before forwarding any requests
+    const init = await waitForInit(context);
+    if (!init.ready) {
+      const cause = init.reason === 'timeout' ? 'timed out waiting for' : 'failed during';
+      throw new Error(`Cannot process ${config.method}: WordPress connection ${cause} initialization`);
+    }
+
     // Map request parameters to WordPress format
     const wpParams = config.paramMapper(request);
-    
+
     // Prepare request based on transport type
     const requestData = prepareRequest(wpParams, request, context);
-    
+
     // Send request to WordPress
     const response = await wpRequest(requestData, context.transportType === 'jsonrpc');
-    
+
     return response;
   };
 }
