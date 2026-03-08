@@ -34,7 +34,7 @@
     }
   },
   "bin": {
-    "@automattic/mcp-wordpress-remote": "dist/proxy.js"
+    "mcp-wordpress-remote": "./dist/proxy.js"
   },
   "scripts": {
     "build": "tsup",
