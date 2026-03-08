@@ -43,7 +43,7 @@ describe('Persistent Auth Config Module', () => {
       await ensureConfigDir();
       const configDir = getConfigDir();
       
-      expect(configDir).toContain('wordpress-remote-0.2.1');
+      expect(configDir).toMatch(/wordpress-remote-\d+\.\d+\.\d+/);
       expect(fsSync.existsSync(configDir)).toBe(true);
       
       // Check permissions (on Unix systems)
@@ -60,16 +60,19 @@ describe('Persistent Auth Config Module', () => {
       const configDir = getConfigDir();
       
       // In test environment, we may use different directory paths
-      expect(configDir).toContain('wordpress-remote-0.2.1');
+      expect(configDir).toMatch(/wordpress-remote-\d+\.\d+\.\d+/);
     });
 
     it('should handle config directory creation errors gracefully', async () => {
-      // Create a file where the directory should be to cause an error
-      const conflictPath = path.join(tempDir, 'wordpress-remote-0.2.1');
+      // Create a file where the versioned directory should be to cause an error.
+      // getConfigDir() returns path.join(tempDir, 'wordpress-remote-<VERSION>'),
+      // so we must use the actual version string to trigger the conflict.
+      const { getConfigDir, ensureConfigDir } = await import('../../src/lib/persistent-auth-config.js');
+      const conflictPath = getConfigDir();
+      // Ensure parent exists, then place a regular file where mkdir expects a directory
+      await fs.mkdir(path.dirname(conflictPath), { recursive: true });
       await fs.writeFile(conflictPath, 'conflict');
 
-      const { ensureConfigDir } = await import('../../src/lib/persistent-auth-config.js');
-      
       await expect(ensureConfigDir()).rejects.toThrow();
     });
   });

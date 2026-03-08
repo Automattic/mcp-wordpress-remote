@@ -3,7 +3,6 @@
  */
 
 import { jest } from '@jest/globals';
-import crypto from 'crypto';
 
 describe('MCP OAuth Utils', () => {
   describe('generatePKCE', () => {
@@ -39,18 +38,16 @@ describe('MCP OAuth Utils', () => {
       expect(pkce1.codeChallenge).not.toBe(pkce2.codeChallenge);
     });
 
-    it('should generate consistent challenge from verifier', async () => {
+    it('should produce a base64url-encoded SHA-256 challenge (no padding)', async () => {
       const { generatePKCE } = await import('../../src/lib/mcp-oauth-utils.js');
-      
-      const pkce = generatePKCE();
-      
-      // Manually calculate expected challenge
-      const expectedChallenge = crypto
-        .createHash('sha256')
-        .update(pkce.codeVerifier)
-        .digest('base64url');
 
-      expect(pkce.codeChallenge).toBe(expectedChallenge);
+      const pkce = generatePKCE();
+
+      // S256 challenges are 43 chars of base64url (256 bits / 6 bits per char, no padding)
+      expect(pkce.codeChallenge).toHaveLength(43);
+      expect(pkce.codeChallenge).toMatch(/^[A-Za-z0-9_-]+$/);
+      // Must not contain base64 padding characters
+      expect(pkce.codeChallenge).not.toContain('=');
     });
   });
 

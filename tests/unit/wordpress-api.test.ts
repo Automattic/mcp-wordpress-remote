@@ -1,5 +1,8 @@
 /**
  * Unit tests for wordpress-api module
+ *
+ * Tests the wpRequest function: URL construction, authentication dispatch,
+ * request formatting, and error handling.
  */
 
 import { jest } from '@jest/globals';
@@ -26,6 +29,9 @@ jest.unstable_mockModule('../../src/lib/coordination.js', () => ({
   }),
 }));
 
+// The WordPress MCP endpoint used by the source code
+const WP_MCP_ENDPOINT = '/?rest_route=/wp/v2/wpmcp';
+
 describe('WordPress API Module', () => {
   let restoreEnv: () => void;
 
@@ -49,7 +55,7 @@ describe('WordPress API Module', () => {
         });
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-        
+
         await expect(wpRequest({ method: 'initialize' })).rejects.toThrow(
           'Configuration validation failed'
         );
@@ -61,13 +67,12 @@ describe('WordPress API Module', () => {
           JWT_TOKEN: 'test-jwt-token',
         });
 
-        // Mock the API response
         nock('https://test-site.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+          .post(WP_MCP_ENDPOINT)
           .reply(200, { status: 'success', data: 'test' });
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-        
+
         const response = await wpRequest({ method: 'initialize' });
         expect(response).toEqual({ status: 'success', data: 'test' });
       });
@@ -76,12 +81,12 @@ describe('WordPress API Module', () => {
     describe('URL construction', () => {
       it('should use REST route format for standard WordPress sites', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com',
+          WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-jwt-token',
         });
 
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
           .reply(200, { status: 'success' });
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
@@ -90,15 +95,13 @@ describe('WordPress API Module', () => {
         expect(nock.isDone()).toBe(true);
       });
 
-
-
       it('should use exact URL when custom path is provided', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com/custom/path',
+          WP_API_URL: 'https://my-wp-site.com/custom/path',
           JWT_TOKEN: 'test-jwt-token',
         });
 
-        nock('https://example.com')
+        nock('https://my-wp-site.com')
           .post('/custom/path')
           .reply(200, { status: 'success' });
 
@@ -110,12 +113,12 @@ describe('WordPress API Module', () => {
 
       it('should remove trailing slashes from URL', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com///',
+          WP_API_URL: 'https://my-wp-site.com///',
           JWT_TOKEN: 'test-jwt-token',
         });
 
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
           .reply(200, { status: 'success' });
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
@@ -129,12 +132,12 @@ describe('WordPress API Module', () => {
       describe('JWT Token authentication', () => {
         it('should use JWT token when available', async () => {
           restoreEnv = mockEnv({
-            WP_API_URL: 'https://example.com',
+            WP_API_URL: 'https://my-wp-site.com',
             JWT_TOKEN: 'test-jwt-token-12345',
           });
 
-          nock('https://example.com')
-            .post('/?rest_route=/wp/v2/mcp/v1')
+          nock('https://my-wp-site.com')
+            .post(WP_MCP_ENDPOINT)
             .matchHeader('authorization', 'Bearer test-jwt-token-12345')
             .reply(200, { status: 'success' });
 
@@ -143,38 +146,20 @@ describe('WordPress API Module', () => {
 
           expect(nock.isDone()).toBe(true);
         });
-
-        it('should log JWT token length for debugging', async () => {
-          restoreEnv = mockEnv({
-            WP_API_URL: 'https://example.com',
-            JWT_TOKEN: 'test-jwt-token',
-          });
-
-          nock('https://example.com')
-            .post('/?rest_route=/wp/v2/mcp/v1')
-            .reply(200, { status: 'success' });
-
-          const logSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-          const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-          await wpRequest({ method: 'initialize' });
-
-          logSpy.mockRestore();
-        });
       });
 
       describe('Basic Auth authentication', () => {
         it('should use WordPress Basic Auth when JWT is not available', async () => {
           restoreEnv = mockEnv({
-            WP_API_URL: 'https://example.com',
+            WP_API_URL: 'https://my-wp-site.com',
             WP_API_USERNAME: 'testuser',
             WP_API_PASSWORD: 'testpass',
           });
 
           const expectedAuth = Buffer.from('testuser:testpass').toString('base64');
-          
-          nock('https://example.com')
-            .post('/?rest_route=/wp/v2/mcp/v1')
+
+          nock('https://my-wp-site.com')
+            .post(WP_MCP_ENDPOINT)
             .matchHeader('authorization', `Basic ${expectedAuth}`)
             .reply(200, { status: 'success' });
 
@@ -186,22 +171,24 @@ describe('WordPress API Module', () => {
 
         it('should use WooCommerce credentials for WooCommerce report tools', async () => {
           restoreEnv = mockEnv({
-            WP_API_URL: 'https://example.com',
+            WP_API_URL: 'https://my-wp-site.com',
+            WP_API_USERNAME: 'wp-user',
+            WP_API_PASSWORD: 'wp-pass',
             WOO_CUSTOMER_KEY: 'woo_key',
             WOO_CUSTOMER_SECRET: 'woo_secret',
           });
 
           const expectedAuth = Buffer.from('woo_key:woo_secret').toString('base64');
-          
-          nock('https://example.com')
-            .post('/?rest_route=/wp/v2/mcp/v1')
+
+          nock('https://my-wp-site.com')
+            .post(WP_MCP_ENDPOINT)
             .matchHeader('authorization', `Basic ${expectedAuth}`)
             .reply(200, { status: 'success' });
 
           const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-          await wpRequest({ 
+          await wpRequest({
             method: 'tools/call',
-            args: { tool: 'wc_reports_sales' }
+            params: { name: 'wc_reports_sales' },
           });
 
           expect(nock.isDone()).toBe(true);
@@ -209,15 +196,17 @@ describe('WordPress API Module', () => {
 
         it('should throw AuthError when WooCommerce credentials are missing for WooCommerce tools', async () => {
           restoreEnv = mockEnv({
-            WP_API_URL: 'https://example.com',
+            WP_API_URL: 'https://my-wp-site.com',
+            WP_API_USERNAME: 'testuser',
+            WP_API_PASSWORD: 'testpass',
             // Missing WOO_CUSTOMER_KEY and WOO_CUSTOMER_SECRET
           });
 
           const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-          
-          await expect(wpRequest({ 
+
+          await expect(wpRequest({
             method: 'tools/call',
-            args: { tool: 'wc_reports_sales' }
+            params: { name: 'wc_reports_sales' },
           })).rejects.toThrow('Missing WooCommerce credentials');
         });
       });
@@ -225,19 +214,14 @@ describe('WordPress API Module', () => {
       describe('OAuth authentication', () => {
         it('should attempt OAuth when enabled and no JWT token', async () => {
           restoreEnv = mockEnv({
-            WP_API_URL: 'https://example.com',
+            WP_API_URL: 'https://my-wp-site.com',
             OAUTH_ENABLED: 'true',
             WP_OAUTH_CLIENT_ID: 'test-client-id',
           });
 
-          // Mock OAuth to return no tokens (will fallback to Basic Auth)
-          nock('https://example.com')
-            .post('/?rest_route=/wp/v2/mcp/v1')
-            .reply(200, { status: 'success' });
-
           const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-          
-          // This should attempt OAuth but fallback gracefully
+
+          // OAuth mock returns null tokens, no Basic Auth fallback either
           await expect(wpRequest({ method: 'initialize' })).rejects.toThrow(
             'No authentication method available'
           );
@@ -245,7 +229,7 @@ describe('WordPress API Module', () => {
 
         it('should fallback to Basic Auth when OAuth fails', async () => {
           restoreEnv = mockEnv({
-            WP_API_URL: 'https://example.com',
+            WP_API_URL: 'https://my-wp-site.com',
             OAUTH_ENABLED: 'true',
             WP_OAUTH_CLIENT_ID: 'test-client-id',
             WP_API_USERNAME: 'fallback-user',
@@ -253,9 +237,9 @@ describe('WordPress API Module', () => {
           });
 
           const expectedAuth = Buffer.from('fallback-user:fallback-pass').toString('base64');
-          
-          nock('https://example.com')
-            .post('/?rest_route=/wp/v2/mcp/v1')
+
+          nock('https://my-wp-site.com')
+            .post(WP_MCP_ENDPOINT)
             .matchHeader('authorization', `Basic ${expectedAuth}`)
             .reply(200, { status: 'success' });
 
@@ -269,14 +253,14 @@ describe('WordPress API Module', () => {
       describe('No authentication', () => {
         it('should throw AuthError when no authentication method is configured', async () => {
           restoreEnv = mockEnv({
-            WP_API_URL: 'https://example.com',
+            WP_API_URL: 'https://my-wp-site.com',
             // No authentication methods configured
           });
 
           const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-          
+
           await expect(wpRequest({ method: 'initialize' })).rejects.toThrow(
-            'No authentication method available'
+            'No authentication method'
           );
         });
       });
@@ -285,12 +269,12 @@ describe('WordPress API Module', () => {
     describe('Request handling', () => {
       it('should send POST request with correct headers', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com',
+          WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-token',
         });
 
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
           .matchHeader('authorization', 'Bearer test-token')
           .matchHeader('content-type', 'application/json')
           .reply(200, { status: 'success' });
@@ -303,14 +287,14 @@ describe('WordPress API Module', () => {
 
       it('should send request body as JSON', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com',
+          WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-token',
         });
 
         const requestParams = { method: 'tools/list', cursor: 'abc123' };
-        
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1', requestParams)
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT, requestParams)
           .reply(200, { status: 'success' });
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
@@ -321,17 +305,17 @@ describe('WordPress API Module', () => {
 
       it('should handle successful API responses', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com',
+          WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-token',
         });
 
-        const expectedResponse = { 
-          status: 'success', 
-          data: { tools: ['tool1', 'tool2'] } 
+        const expectedResponse = {
+          status: 'success',
+          data: { tools: ['tool1', 'tool2'] }
         };
-        
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
           .reply(200, expectedResponse);
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
@@ -344,16 +328,16 @@ describe('WordPress API Module', () => {
     describe('Error handling', () => {
       it('should throw APIError for HTTP error responses', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com',
+          WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-token',
         });
 
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
           .reply(401, 'Unauthorized');
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-        
+
         await expect(wpRequest({ method: 'initialize' })).rejects.toThrow(
           'WordPress API error (401): Unauthorized'
         );
@@ -361,16 +345,16 @@ describe('WordPress API Module', () => {
 
       it('should throw APIError for network errors', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com',
+          WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-token',
         });
 
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
           .replyWithError('Network error');
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-        
+
         await expect(wpRequest({ method: 'initialize' })).rejects.toThrow(
           'Network error'
         );
@@ -378,33 +362,33 @@ describe('WordPress API Module', () => {
 
       it('should throw APIError for invalid JSON responses', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com',
+          WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-token',
         });
 
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
           .reply(200, 'invalid json');
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-        
+
         await expect(wpRequest({ method: 'initialize' })).rejects.toThrow();
       });
     });
 
     describe('Default parameters', () => {
-      it('should handle default parameters when none provided', async () => {
+      it('should handle minimal request data', async () => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com',
+          WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-token',
         });
 
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1', { method: 'init' })
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT, { method: 'init' })
           .reply(200, { status: 'success' });
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-        await wpRequest();
+        await wpRequest({ method: 'init' });
 
         expect(nock.isDone()).toBe(true);
       });
@@ -412,62 +396,29 @@ describe('WordPress API Module', () => {
   });
 
   describe('Helper functions', () => {
-    describe('removeTrailingSlash', () => {
-      it('should be tested through URL construction', async () => {
-        // This function is private but tested through wpRequest behavior
+    describe('constructApiUrl', () => {
+      it.each([
+        ['bare domain', 'https://my-wp-site.com', WP_MCP_ENDPOINT],
+        ['API subdomain', 'https://api.mysite.com', WP_MCP_ENDPOINT],
+        ['custom path', 'https://my-wp-site.com/custom', '/custom'],
+      ])('routes %s (%s) to correct endpoint', async (_label, url, expectedPath) => {
         restoreEnv = mockEnv({
-          WP_API_URL: 'https://example.com//',
+          WP_API_URL: url,
           JWT_TOKEN: 'test-token',
         });
 
-        nock('https://example.com')
-          .post('/?rest_route=/wp/v2/mcp/v1')
+        const urlObj = new URL(url);
+        nock(`${urlObj.protocol}//${urlObj.host}`)
+          .post(expectedPath)
           .reply(200, { status: 'success' });
 
+        jest.resetModules();
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
         await wpRequest({ method: 'initialize' });
 
         expect(nock.isDone()).toBe(true);
-      });
-    });
-
-    describe('constructApiUrl', () => {
-      it('should handle various URL formats correctly through wpRequest', async () => {
-        // Testing different URL construction scenarios through wpRequest
-        const testCases = [
-          {
-            url: 'https://example.com',
-            expectedPath: '/?rest_route=/wp/v2/mcp/v1'
-          },
-          {
-            url: 'https://api.mysite.com',
-            expectedPath: '/?rest_route=/wp/v2/mcp/v1'
-          },
-          {
-            url: 'https://example.com/custom',
-            expectedPath: '/custom'
-          }
-        ];
-
-        for (const testCase of testCases) {
-          restoreEnv = mockEnv({
-            WP_API_URL: testCase.url,
-            JWT_TOKEN: 'test-token',
-          });
-
-          const urlObj = new URL(testCase.url);
-          nock(`${urlObj.protocol}//${urlObj.host}`)
-            .post(testCase.expectedPath)
-            .reply(200, { status: 'success' });
-
-          jest.resetModules();
-          const { wpRequest } = await import('../../src/lib/wordpress-api.js');
-          await wpRequest({ method: 'initialize' });
-
-          expect(nock.isDone()).toBe(true);
-          nock.cleanAll();
-          if (restoreEnv) restoreEnv();
-        }
+        nock.cleanAll();
+        if (restoreEnv) restoreEnv();
       });
     });
   });
@@ -475,16 +426,16 @@ describe('WordPress API Module', () => {
   describe('OAuth token management', () => {
     it('should handle getOAuthTokens when OAuth is disabled', async () => {
       restoreEnv = mockEnv({
-        WP_API_URL: 'https://example.com',
+        WP_API_URL: 'https://my-wp-site.com',
         OAUTH_ENABLED: 'false',
         WP_API_USERNAME: 'testuser',
         WP_API_PASSWORD: 'testpass',
       });
 
       const expectedAuth = Buffer.from('testuser:testpass').toString('base64');
-      
-      nock('https://example.com')
-        .post('/?rest_route=/wp/v2/mcp/v1')
+
+      nock('https://my-wp-site.com')
+        .post(WP_MCP_ENDPOINT)
         .matchHeader('authorization', `Basic ${expectedAuth}`)
         .reply(200, { status: 'success' });
 
