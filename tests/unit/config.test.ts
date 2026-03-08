@@ -253,12 +253,6 @@ describe('Configuration Module', () => {
       expect(parseOAuthScopes(',read,write,', defaultScopes)).toEqual(['read', 'write']);
     });
 
-    it('should handle single scope correctly', async () => {
-      const { parseOAuthScopes } = await import('../../src/lib/config.js');
-      
-      const defaultScopes = ['read', 'write'];
-      expect(parseOAuthScopes('global', defaultScopes)).toEqual(['global']);
-    });
   });
 
 

@@ -7,7 +7,7 @@ import { cleanupExpiredTokens } from './lib/persistent-auth-config.js';
 import { validateNodeVersion } from './lib/node-utils.js';
 import { setupFetchPolyfill } from './lib/fetch-utils.js';
 import { detectTransportType } from './lib/transport-detection.js';
-import { createSessionContext } from './lib/session-utils.js';
+import { createSessionContext, resolveInit } from './lib/session-utils.js';
 import { createWrappedHandler, HANDLER_CONFIGS } from './lib/request-handler-factory.js';
 import { MCP_WORDPRESS_REMOTE_VERSION } from './lib/config.js';
 import {
@@ -92,6 +92,9 @@ async function WordPressProxy() {
       logger.info('🔄 Initializing WordPress connection with client parameters', 'INIT');
       const { initResult } = await detectTransportType(sessionContext, request.params);
 
+      // Signal that init is complete — unblocks any handlers waiting on waitForInit
+      resolveInit(sessionContext, false);
+
       // Return the WordPress server's initialize response
       const wordpressInitResponse = {
         protocolVersion: initResult.protocolVersion || '2025-06-18',
@@ -111,9 +114,13 @@ async function WordPressProxy() {
         error
       );
 
+      // Mark init as failed and unblock waiting handlers (they'll return errors)
+      resolveInit(sessionContext, true);
+
       const clientProtocolVersion = request?.params?.protocolVersion || '2025-06-18';
 
-      // Return a basic fallback response
+      // Return a fallback response with empty capabilities so the SDK
+      // doesn't try to list tools/resources/prompts for a dead connection
       const fallbackResponse = {
         protocolVersion: clientProtocolVersion,
         serverInfo: {
@@ -121,16 +128,9 @@ async function WordPressProxy() {
           version: MCP_WORDPRESS_REMOTE_VERSION,
         },
         capabilities: {
-          tools: {
-            listChanged: false,
-          },
-          resources: {
-            listChanged: false,
-            subscribe: false,
-          },
-          prompts: {
-            listChanged: false,
-          },
+          tools: {},
+          resources: {},
+          prompts: {},
           logging: {},
           completions: {},
         },
