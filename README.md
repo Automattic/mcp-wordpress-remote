@@ -58,7 +58,7 @@ You can add custom headers to all API requests using the `CUSTOM_HEADERS` enviro
       "command": "npx",
       "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
-        "WP_API_URL": "https://your-wordpress-site.com",
+        "WP_API_URL": "https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server",
         "CUSTOM_HEADERS": "{\"X-MCP-API-Key\": \"*Ibo7tweixlbfuwaiufxgakjyefctwajcetb*\", \"X-Custom-Header\": \"value\"}"
       }
     }
@@ -75,7 +75,7 @@ You can add custom headers to all API requests using the `CUSTOM_HEADERS` enviro
       "command": "npx",
       "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
-        "WP_API_URL": "https://your-wordpress-site.com",
+        "WP_API_URL": "https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server",
         "CUSTOM_HEADERS": "X-MCP-API-Key:IOskncfyes78U8on3q7ry43o487tybrc,X-Custom-Header:value"
       }
     }
@@ -87,7 +87,7 @@ You can add custom headers to all API requests using the `CUSTOM_HEADERS` enviro
 
 ```bash
 CUSTOM_HEADERS='{"X-MCP-API-Key": "wc_mcp_FaQduhQcW0mfVaZgP3yaaqDuXaZ3mw7j"}' \
-WP_API_URL="https://your-site.com" \
+WP_API_URL="https://your-site.com/wp-json/mcp/mcp-adapter-default-server" \
 npx @automattic/mcp-wordpress-remote
 ```
 
@@ -163,7 +163,7 @@ For server-to-server authentication or when OAuth is not available.
       "command": "npx",
       "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
-        "WP_API_URL": "https://your-wordpress-site.com",
+        "WP_API_URL": "https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server",
         "JWT_TOKEN": "your-jwt-token-here"
       }
     }
@@ -182,7 +182,7 @@ Uses WordPress username and application password for basic authentication.
       "command": "npx",
       "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
-        "WP_API_URL": "https://your-wordpress-site.com",
+        "WP_API_URL": "https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server",
         "WP_API_USERNAME": "your-username",
         "WP_API_PASSWORD": "your-application-password",
         "OAUTH_ENABLED": "false"
@@ -210,7 +210,7 @@ To create an application password:
       "command": "npx",
       "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
-        "WP_API_URL": "https://your-wordpress-site.com",
+        "WP_API_URL": "https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server",
         "OAUTH_CALLBACK_PORT": "7665",
         "OAUTH_HOST": "127.0.0.1",
         "WP_OAUTH_CLIENT_ID": "your-custom-client-id"
@@ -231,7 +231,7 @@ For WooCommerce-specific tools and reports:
       "command": "npx",
       "args": ["-y", "@automattic/mcp-wordpress-remote"],
       "env": {
-        "WP_API_URL": "https://your-wordpress-site.com",
+        "WP_API_URL": "https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server",
         "WOO_CUSTOMER_KEY": "ck_your-consumer-key",
         "WOO_CUSTOMER_SECRET": "cs_your-consumer-secret"
       }
@@ -244,7 +244,7 @@ For WooCommerce-specific tools and reports:
 
 | Variable                      | Description                                      | Default              | Required              |
 | ----------------------------- | ------------------------------------------------ | -------------------- | --------------------- |
-| `WP_API_URL`                  | WordPress site URL                               | -                    | ✅                    |
+| `WP_API_URL`                  | WordPress site URL including MCP endpoint        | -                    | ✅                    |
 | `OAUTH_ENABLED`               | Enable OAuth authentication                      | `true`               | -                     |
 | `OAUTH_CALLBACK_PORT`         | OAuth callback port                              | `7665`               | -                     |
 | `OAUTH_HOST`                  | OAuth callback hostname                          | `127.0.0.1`          | -                     |
@@ -317,7 +317,7 @@ Configure your MCP client to use the local version:
       "command": "node",
       "args": ["/path/to/your/mcp-wordpress-remote/dist/proxy.js"],
       "env": {
-        "WP_API_URL": "https://your-wordpress-site.com"
+        "WP_API_URL": "https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server"
       }
     }
   }
