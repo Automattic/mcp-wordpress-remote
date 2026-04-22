@@ -323,6 +323,85 @@ describe('WordPress API Module', () => {
 
         expect(response).toEqual(expectedResponse);
       });
+
+      it('should parse text/event-stream responses and extract the JSON-RPC result', async () => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+        });
+
+        const jsonRpcEnvelope = {
+          jsonrpc: '2.0',
+          id: 1,
+          result: {
+            protocolVersion: '2025-06-18',
+            serverInfo: { name: 'Parker', version: '1.0.0' },
+            capabilities: {},
+          },
+        };
+        const sseBody =
+          `event: message\n` +
+          `id: abc-123\n` +
+          `data: ${JSON.stringify(jsonRpcEnvelope)}\n\n`;
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
+          .reply(200, sseBody, { 'Content-Type': 'text/event-stream' });
+
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+        const response = await wpRequest(
+          { jsonrpc: '2.0', method: 'initialize', id: 1, params: {} },
+          true
+        );
+
+        expect(response).toEqual(jsonRpcEnvelope.result);
+      });
+
+      it('should handle multi-line data fields in SSE responses', async () => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+        });
+
+        const payload = { jsonrpc: '2.0', id: 1, result: { ok: true } };
+        const json = JSON.stringify(payload, null, 2);
+        const sseBody =
+          `event: message\n` +
+          json
+            .split('\n')
+            .map(l => `data: ${l}`)
+            .join('\n') +
+          `\n\n`;
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
+          .reply(200, sseBody, { 'Content-Type': 'text/event-stream' });
+
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+        const response = await wpRequest(
+          { jsonrpc: '2.0', method: 'initialize', id: 1, params: {} },
+          true
+        );
+
+        expect(response).toEqual(payload.result);
+      });
+
+      it('should throw when SSE response contains no message event', async () => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+        });
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
+          .reply(200, ': keep-alive comment\n\n', { 'Content-Type': 'text/event-stream' });
+
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+
+        await expect(
+          wpRequest({ jsonrpc: '2.0', method: 'initialize', id: 1, params: {} }, true)
+        ).rejects.toThrow('No "message" event');
+      });
     });
 
     describe('Error handling', () => {

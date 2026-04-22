@@ -64,7 +64,7 @@ export function calculateDefaultPort(serverUrlHash: string): number {
 export async function findExistingClientPort(serverUrlHash: string): Promise<number | undefined> {
   const clientInfo = await readJsonFile<OAuthClientInfo>(serverUrlHash, 'client_info.json');
 
-  if (!clientInfo) {
+  if (!clientInfo || !clientInfo?.redirect_uris) {
     return undefined;
   }
 
