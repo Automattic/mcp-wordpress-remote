@@ -327,17 +327,23 @@ export class OAuthCallbackServer {
   }
 
   async stop(): Promise<void> {
-    return new Promise(resolve => {
-      if (this.server) {
-        this.server.close(() => {
-          logger.oauth('OAuth callback server stopped');
-          this.server = null;
-          resolve();
-        });
-      } else {
-        resolve();
-      }
+    if (!this.server) return;
+    const server = this.server;
+    this.server = null;
+
+    // Fire-and-forget. By the time stop() is called we already have the auth
+    // code and persisted tokens, so the callback server has no further role.
+    // Waiting for http.Server.close()'s callback would gate MCP initialization
+    // on every socket draining, and browsers hold the OAuth callback socket
+    // via HTTP/1.1 keep-alive for up to ~60s — long enough to trip the MCP
+    // client's 30s connect timeout on the very first run. Initiate close
+    // and force-sever remaining sockets; logging happens when the callback
+    // eventually fires in the background.
+    server.close(err => {
+      if (err) logger.error('OAuth callback server close error', 'OAUTH', err);
+      else logger.oauth('OAuth callback server stopped');
     });
+    server.closeAllConnections?.();
   }
 
   getCallbackUrl(): string {
