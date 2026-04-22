@@ -60,6 +60,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
     "@tootallnate/quickjs-emscripten": "^0.23.0",
+    "eventsource-parser": "^3.0.1",
     "express": "^4.18.2",
     "https-proxy-agent": "^7.0.6",
     "node-fetch": "^3.3.2",
@@ -100,6 +101,7 @@
     "splitting": false,
     "noExternal": [
       "@modelcontextprotocol/sdk",
+      "eventsource-parser",
       "express",
       "node-fetch",
       "open"

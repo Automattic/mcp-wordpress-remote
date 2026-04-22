@@ -3,6 +3,7 @@
  */
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { createParser } from 'eventsource-parser';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger, LogLevel } from './utils.js';
 import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from './config.js';
@@ -51,40 +52,34 @@ function removeTrailingSlash(url: string): string {
  * Parse an SSE (text/event-stream) response body and return the JSON payload
  * from the first "message" event.
  *
- * MCP's Streamable HTTP transport may respond with Content-Type: text/event-stream
- * when the server has not enabled JSON-response mode. The wire format per the SSE
- * spec is a sequence of events separated by blank lines, where each event is a set
- * of `field: value` lines. We care about `event:` and `data:`; other fields
- * (`id:`, `retry:`, comments starting with `:`) are ignored.
+ * Delegates SSE framing to `eventsource-parser` — the same library the MCP SDK
+ * uses in its Streamable HTTP transport — so edge cases (CRLF, multi-line data,
+ * comments, unknown fields) match spec and the SDK's behavior.
  */
 function parseSSEMessage(text: string): unknown {
-  const events = text.split(/\r?\n\r?\n/).filter(e => e.trim().length > 0);
+  let result: unknown;
+  let found = false;
 
-  for (const event of events) {
-    let eventType = 'message';
-    const dataLines: string[] = [];
-
-    for (const line of event.split(/\r?\n/)) {
-      if (line.length === 0 || line.startsWith(':')) continue;
-
-      const colonIdx = line.indexOf(':');
-      const field = colonIdx === -1 ? line : line.slice(0, colonIdx);
-      let value = colonIdx === -1 ? '' : line.slice(colonIdx + 1);
-      if (value.startsWith(' ')) value = value.slice(1);
-
-      if (field === 'event') {
-        eventType = value;
-      } else if (field === 'data') {
-        dataLines.push(value);
+  const parser = createParser({
+    onEvent(event) {
+      if (found) return;
+      // Per the SSE spec, an event with no `event:` field is a default "message".
+      // eventsource-parser leaves `event.event` as undefined in that case rather
+      // than defaulting to "message" like the browser EventSource API.
+      if (!event.event || event.event === 'message') {
+        result = JSON.parse(event.data);
+        found = true;
       }
-    }
+    },
+  });
 
-    if (eventType === 'message' && dataLines.length > 0) {
-      return JSON.parse(dataLines.join('\n'));
-    }
+  parser.feed(text);
+
+  if (!found) {
+    throw new Error('No "message" event with data found in SSE response');
   }
 
-  throw new Error('No "message" event with data found in SSE response');
+  return result;
 }
 
 /**
