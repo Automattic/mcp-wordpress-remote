@@ -386,6 +386,33 @@ describe('WordPress API Module', () => {
         expect(response).toEqual(payload.result);
       });
 
+      it('should treat SSE frames with no event field as default "message" events', async () => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+        });
+
+        const jsonRpcEnvelope = {
+          jsonrpc: '2.0',
+          id: 1,
+          result: { ok: true },
+        };
+        // No `event:` field — per the SSE spec this is a default "message" event.
+        const sseBody = `data: ${JSON.stringify(jsonRpcEnvelope)}\n\n`;
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
+          .reply(200, sseBody, { 'Content-Type': 'text/event-stream' });
+
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+        const response = await wpRequest(
+          { jsonrpc: '2.0', method: 'initialize', id: 1, params: {} },
+          true
+        );
+
+        expect(response).toEqual(jsonRpcEnvelope.result);
+      });
+
       it('should throw when SSE response contains no message event', async () => {
         restoreEnv = mockEnv({
           WP_API_URL: 'https://my-wp-site.com',
