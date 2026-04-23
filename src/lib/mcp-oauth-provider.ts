@@ -334,10 +334,10 @@ export class MCPOAuthProvider {
       await writeTextFile(this.serverUrlHash, 'oauth_state.txt', this.currentState);
 
       // Step 4: Set up callback server with smart port selection
-      const callbackPort = this.config.callbackPort === 0 
-        ? await getOAuthCallbackPort() 
+      const callbackPort = this.config.callbackPort === 0
+        ? await getOAuthCallbackPort()
         : this.config.callbackPort;
-        
+
       const callbackServer = setupWPOAuthCallbackServer(
         {
           port: callbackPort,
