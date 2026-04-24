@@ -15,7 +15,7 @@ npm install
 ```json
 {
   "mcpServers": {
-    "wordpress-mcp-server-name": {
+    "wordpress": {
       "command": "node",
       "args": ["/full-path-to-mcp-wordpress-remote/dist/proxy.js"],
       "env": {
@@ -24,7 +24,7 @@ npm install
         "WOO_CUSTOMER_KEY": "",
         "WOO_CUSTOMER_SECRET": "",
         "LOG_FILE": "optional full path to the log file",
-        "WP_API_URL": "http(s)://your-website-url.com/"
+        "WP_API_URL": "https://your-website-url.com/wp-json/mcp/mcp-adapter-default-server"
       }
     }
   }

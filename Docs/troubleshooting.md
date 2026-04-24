@@ -29,11 +29,11 @@ You can then update your MCP server configuration to use the full path for `npx`
 ```php
 {
 	"mcpServers": {
-		"wordpress-mcp": {
+		"wordpress": {
 			"command": "/Users/username/.nvm/versions/node/v22.16.0/bin/npx",
 			"args": [ "-y", "@automattic/mcp-wordpress-remote@latest" ],
 			"env": {
-				"WP_API_URL": "https://example.test/",
+				"WP_API_URL": "https://example.test/wp-json/mcp/mcp-adapter-default-server",
 				"JWT_TOKEN": "{your_jwt-token-here}",
 			}
 		}
@@ -50,12 +50,12 @@ You can work around this by setting the `NODE_TLS_REJECT_UNAUTHORIZED` environme
 ```php
 {
 	"mcpServers": {
-		"wordpress-mcp": {
+		"wordpress": {
 			"command": "/Users/username/.nvm/versions/node/v22.16.0/bin/npx",
 			"args": [ "-y", "@automattic/mcp-wordpress-remote@latest" ],
 			"env": {
 			    "NODE_TLS_REJECT_UNAUTHORIZED": "0",
-				"WP_API_URL": "https://example.test/",
+				"WP_API_URL": "https://example.test/wp-json/mcp/mcp-adapter-default-server",
 				"JWT_TOKEN": "{your_jwt-token-here}",
 			}
 		}

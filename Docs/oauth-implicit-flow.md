@@ -35,7 +35,7 @@ OAUTH_FLOW_TYPE=implicit
 OAUTH_USE_PKCE=false
 
 # Your WordPress site URL
-WP_API_URL=https://your-wordpress-site.com
+WP_API_URL=https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server
 
 # OAuth client ID from your WordPress site
 WP_OAUTH_CLIENT_ID=your_client_id
@@ -60,7 +60,7 @@ Example configuration:
 ```bash
 OAUTH_ENABLED=true
 OAUTH_FLOW_TYPE=implicit
-WP_API_URL=https://your-wordpress-site.com
+WP_API_URL=https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server
 WP_OAUTH_CLIENT_ID=12345
 OAUTH_CALLBACK_PORT=7665
 ```
