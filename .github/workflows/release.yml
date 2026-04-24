@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Check out the tagged commit
         uses: actions/checkout@v4
@@ -42,11 +43,9 @@ jobs:
         run: npm run build
 
       - name: Publish (canary dist-tag on prerelease, latest on stable)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ "${{ github.event.release.prerelease }}" = "true" ]; then
-            npm publish --access public --tag canary
+            npm publish --access public --provenance --tag canary
           else
-            npm publish --access public
+            npm publish --access public --provenance
           fi
