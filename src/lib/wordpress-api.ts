@@ -33,6 +33,12 @@ let globalEvents: EventEmitter | null = null;
 
 // Global session ID received from WordPress server
 let globalSessionId: string | null = null;
+let lastInitializeRequest: { requestData: any; useJsonRpc: boolean } | null = null;
+let sessionRefreshPromise: Promise<void> | null = null;
+
+const WP_MCP_ENDPOINT = '/wp/v2/wpmcp';
+const INVALID_SESSION_ERROR_CODE = -32602;
+const INVALID_SESSION_ERROR_MESSAGE = 'Invalid or expired session';
 
 function validateEnvironment() {
   const validation = validateConfig();
@@ -206,14 +212,74 @@ export function getSessionId(): string | null {
   return globalSessionId;
 }
 
-export async function wpRequest(
-  requestData: any,
-  useJsonRpc: boolean = true
-): Promise<WordPressResponse> {
-  // Validate environment variables first
-  validateEnvironment();
+function getCurrentApiUrl(): string {
+  return process.env.WP_API_URL || CONFIG.WP_API_URL;
+}
 
-  const endpoint = '/wp/v2/wpmcp'; // WordPress MCP endpoint
+function getRequestUrl(): string {
+  return constructApiUrl(getCurrentApiUrl(), WP_MCP_ENDPOINT);
+}
+
+function cloneRequestData<T>(requestData: T): T {
+  return JSON.parse(JSON.stringify(requestData)) as T;
+}
+
+function isInitializeRequest(requestData: any): boolean {
+  return requestData?.method === 'initialize';
+}
+
+function cacheInitializeRequest(requestData: any, useJsonRpc: boolean): void {
+  lastInitializeRequest = {
+    requestData: cloneRequestData(requestData),
+    useJsonRpc,
+  };
+}
+
+function parseApiErrorResponse(error: APIError): any {
+  if (!error.response) {
+    return null;
+  }
+
+  if (typeof error.response === 'string') {
+    try {
+      return JSON.parse(error.response);
+    } catch {
+      return null;
+    }
+  }
+
+  return error.response;
+}
+
+function isInvalidSessionError(error: APIError): boolean {
+  const errorResponse = parseApiErrorResponse(error);
+  return (
+    errorResponse?.code === INVALID_SESSION_ERROR_CODE &&
+    errorResponse?.message === INVALID_SESSION_ERROR_MESSAGE
+  );
+}
+
+function updateSessionId(sessionId: string): void {
+  if (globalSessionId === sessionId) {
+    return;
+  }
+
+  globalSessionId = sessionId;
+  logger.info(`Session ID received from WordPress: ${globalSessionId}`, 'SESSION');
+}
+
+interface RequestExecutionResult {
+  responseData: WordPressResponse;
+  sessionIdUsed: string | null;
+}
+
+async function executeWordPressRequest(
+  requestData: any,
+  useJsonRpc: boolean,
+  sessionIdUsed: string | null
+): Promise<RequestExecutionResult> {
+  const url = getRequestUrl();
+
   const method = 'POST';
 
   // Log the request parameters for debugging
@@ -308,14 +374,8 @@ export async function wpRequest(
     );
   }
 
-  // Get current API URL from environment (to handle dynamic changes)
-  const currentApiUrl = process.env.WP_API_URL || CONFIG.WP_API_URL;
-
   logger.debug(`Environment: ${CONFIG.NODE_ENV}`, 'API');
-  logger.debug(`Base API URL: ${currentApiUrl}`, 'API');
-
-  // Construct the final API URL based on whether the base URL has a custom path
-  const url = constructApiUrl(currentApiUrl, endpoint);
+  logger.debug(`Base API URL: ${getCurrentApiUrl()}`, 'API');
   logger.debug(`Final requesting URL: ${url}`, 'API');
 
   // Build headers object - only add Authorization if we have one
@@ -331,10 +391,9 @@ export async function wpRequest(
     headers.Authorization = authHeader;
   }
 
-  // Add session ID header if available (for MCP compliance)
-  // Session ID will be set after we receive it from WordPress initialize response
-  if (globalSessionId) {
-    headers['Mcp-Session-Id'] = globalSessionId;
+  // Add session ID header if available for this request
+  if (sessionIdUsed) {
+    headers['Mcp-Session-Id'] = sessionIdUsed;
   }
 
   // Log authentication method being used
@@ -389,11 +448,10 @@ export async function wpRequest(
       responseData = JSON.parse(rawBody);
     }
 
-    // Extract session ID from response headers (for initialize requests)
+    // Accept session updates whenever WordPress provides one.
     const sessionIdHeader = response.headers.get('Mcp-Session-Id');
-    if (sessionIdHeader && !globalSessionId) {
-      globalSessionId = sessionIdHeader;
-      logger.info(`Session ID received from WordPress: ${globalSessionId}`, 'SESSION');
+    if (sessionIdHeader) {
+      updateSessionId(sessionIdHeader);
     }
 
     logger.api('Response received successfully');
@@ -411,17 +469,23 @@ export async function wpRequest(
             `WordPress JSON-RPC error: ${jsonrpcResponse.error.message}`,
             jsonrpcResponse.error.code || 500,
             url,
-            JSON.stringify(jsonrpcResponse.error)
+            jsonrpcResponse.error
           );
         } else if (jsonrpcResponse.result !== undefined) {
           // Extract result from JSON-RPC response
-          return jsonrpcResponse.result as WordPressResponse;
+          return {
+            responseData: jsonrpcResponse.result as WordPressResponse,
+            sessionIdUsed,
+          };
         }
       }
     }
 
     // For simple transport or non-JSON-RPC responses, return response as-is
-    return responseData as WordPressResponse;
+    return {
+      responseData: responseData as WordPressResponse,
+      sessionIdUsed,
+    };
   } catch (error) {
     if (error instanceof APIError) {
       throw error;
@@ -430,5 +494,102 @@ export async function wpRequest(
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`Error in wpRequest: ${errorMessage}`, 'API');
     throw new APIError(errorMessage, 0, url);
+  }
+}
+
+async function refreshSession(failedSessionId: string | null): Promise<void> {
+  if (failedSessionId && globalSessionId && globalSessionId !== failedSessionId) {
+    logger.info('Detected newer session while handling invalid-session error; skipping refresh', 'SESSION');
+    return;
+  }
+
+  if (sessionRefreshPromise) {
+    logger.info('Waiting for in-flight WordPress session refresh', 'SESSION');
+    await sessionRefreshPromise;
+    return;
+  }
+
+  if (!lastInitializeRequest) {
+    throw new APIError(
+      'Cannot refresh WordPress session before initialize has completed',
+      0,
+      getRequestUrl()
+    );
+  }
+
+  sessionRefreshPromise = (async () => {
+    logger.warn('WordPress session rejected; refreshing session via initialize', 'SESSION');
+    globalSessionId = null;
+
+    await executeWordPressRequest(
+      lastInitializeRequest.requestData,
+      lastInitializeRequest.useJsonRpc,
+      null
+    );
+
+    if (!globalSessionId) {
+      throw new APIError(
+        'WordPress initialize did not return a session ID during refresh',
+        0,
+        getRequestUrl()
+      );
+    }
+  })();
+
+  try {
+    await sessionRefreshPromise;
+  } finally {
+    sessionRefreshPromise = null;
+  }
+}
+
+export async function wpRequest(
+  requestData: any,
+  useJsonRpc: boolean = true,
+  options: { allowSessionRecovery?: boolean } = {}
+): Promise<WordPressResponse> {
+  // Validate environment variables first
+  validateEnvironment();
+
+  const allowSessionRecovery = options.allowSessionRecovery !== false;
+
+  if (isInitializeRequest(requestData)) {
+    cacheInitializeRequest(requestData, useJsonRpc);
+  }
+
+  const sessionIdUsed = globalSessionId;
+
+  try {
+    const result = await executeWordPressRequest(requestData, useJsonRpc, sessionIdUsed);
+    return result.responseData;
+  } catch (error) {
+    if (
+      error instanceof APIError &&
+      allowSessionRecovery &&
+      !isInitializeRequest(requestData) &&
+      isInvalidSessionError(error)
+    ) {
+      logger.warn('WordPress session expired; attempting one-time recovery', 'SESSION', {
+        method: requestData?.method || 'unknown',
+        sessionIdUsed: sessionIdUsed || 'none',
+      });
+
+      await refreshSession(sessionIdUsed);
+
+      const retriedResult = await executeWordPressRequest(
+        requestData,
+        useJsonRpc,
+        globalSessionId
+      );
+      return retriedResult.responseData;
+    }
+
+    if (error instanceof APIError) {
+      throw error;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`Error in wpRequest: ${errorMessage}`, 'API');
+    throw new APIError(errorMessage, 0, getRequestUrl());
   }
 }

@@ -7,9 +7,6 @@ import { logger } from './utils.js';
 import { CONFIG, MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
 import { WPTokens, WPClientInfo, TokenValidationResult, LockfileData } from './oauth-types.js';
 
-// Use version from config for directory naming
-const VERSION = MCP_WORDPRESS_REMOTE_VERSION;
-
 /**
  * WordPress MCP Remote Authentication Configuration
  *
@@ -71,8 +68,9 @@ export async function deleteLockfile(serverUrlHash: string): Promise<void> {
  */
 export function getConfigDir(): string {
   const baseConfigDir = CONFIG.WP_MCP_CONFIG_DIR;
-  // Add a version subdirectory so we don't need to worry about backwards/forwards compatibility
-  return path.join(baseConfigDir, `wordpress-remote-${VERSION}`);
+  // Version read at call-time: tsup flattens ESM and emits top-level `const` as `var`,
+  // which breaks TDZ and causes a module-top-level capture to resolve `undefined`.
+  return path.join(baseConfigDir, `wordpress-remote-${MCP_WORDPRESS_REMOTE_VERSION}`);
 }
 
 /**
