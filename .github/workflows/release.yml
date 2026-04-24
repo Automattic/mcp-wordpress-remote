@@ -22,9 +22,6 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Upgrade npm to 11+ (required for Trusted Publishing OIDC)
-        run: npm install -g npm@latest
-
       - name: Install dependencies
         run: npm ci
 
@@ -46,9 +43,13 @@ jobs:
         run: npm run build
 
       - name: Publish (canary dist-tag on prerelease, latest on stable)
+        # Use npm@latest via npx because Node 22 bundles npm 10, but Trusted
+        # Publishing (OIDC token exchange for the registry PUT) needs npm 11.5+.
+        # Upgrading the global npm in-place can corrupt its own dependencies, so
+        # we scope the newer npm to just the publish step.
         run: |
           if [ "${{ github.event.release.prerelease }}" = "true" ]; then
-            npm publish --access public --provenance --tag canary
+            npx -y npm@latest publish --access public --provenance --tag canary
           else
-            npm publish --access public --provenance
+            npx -y npm@latest publish --access public --provenance
           fi
