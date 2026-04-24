@@ -3,6 +3,7 @@
  */
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { createParser } from 'eventsource-parser';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger, LogLevel } from './utils.js';
 import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from './config.js';
@@ -54,18 +55,52 @@ function removeTrailingSlash(url: string): string {
 }
 
 /**
+ * Parse an SSE (text/event-stream) response body and return the JSON payload
+ * from the first "message" event.
+ *
+ * Delegates SSE framing to `eventsource-parser` — the same library the MCP SDK
+ * uses in its Streamable HTTP transport — so edge cases (CRLF, multi-line data,
+ * comments, unknown fields) match spec and the SDK's behavior.
+ */
+function parseSSEMessage(text: string): unknown {
+  let result: unknown;
+  let found = false;
+
+  const parser = createParser({
+    onEvent(event) {
+      if (found) return;
+      // Per the SSE spec, an event with no `event:` field is a default "message".
+      // eventsource-parser leaves `event.event` as undefined in that case rather
+      // than defaulting to "message" like the browser EventSource API.
+      if (!event.event || event.event === 'message') {
+        result = JSON.parse(event.data);
+        found = true;
+      }
+    },
+  });
+
+  parser.feed(text);
+
+  if (!found) {
+    throw new Error('No "message" event with data found in SSE response');
+  }
+
+  return result;
+}
+
+/**
  * Determines if a URL has a custom path (beyond just domain) and constructs the final API URL
  * - If URL has no path (e.g., http://example.com or http://example.com/), use default REST route format
  * - If URL has a path (e.g., http://example.com/api/mcp), use the URL exactly as provided
  */
 function constructApiUrl(baseUrl: string, defaultEndpoint: string): string {
   const cleanUrl = removeTrailingSlash(baseUrl);
-  
+
   try {
     const urlObj = new URL(cleanUrl);
     const hasCustomPath = urlObj.pathname && urlObj.pathname !== '/' && urlObj.pathname.length > 0;
     const hasCustomQuery = urlObj.search && urlObj.search.length > 0;
-    
+
     if (hasCustomPath || hasCustomQuery) {
       // URL has a custom path or query strings - use it exactly as provided
       return cleanUrl;
@@ -287,7 +322,7 @@ async function executeWordPressRequest(
 
     // Determine method and tool name based on transport type
     const method = useJsonRpc ? requestData.method : requestData.method;
-    const toolName = useJsonRpc 
+    const toolName = useJsonRpc
       ? (requestData.params?.name || requestData.params?.tool)
       : (requestData.name || requestData.tool || requestData.args?.tool);
 
@@ -338,7 +373,7 @@ async function executeWordPressRequest(
       'NO_AUTH_METHOD'
     );
   }
-  
+
   logger.debug(`Environment: ${CONFIG.NODE_ENV}`, 'API');
   logger.debug(`Base API URL: ${getCurrentApiUrl()}`, 'API');
   logger.debug(`Final requesting URL: ${url}`, 'API');
@@ -346,6 +381,7 @@ async function executeWordPressRequest(
   // Build headers object - only add Authorization if we have one
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
     'MCP-Protocol-Version': '2025-06-18', // MCP protocol version
     ...customHeaders, // Merge custom headers
   };
@@ -388,29 +424,39 @@ async function executeWordPressRequest(
     const response = await proxyFetch(url, fetchOptions);
     logger.debug(`Response status: ${response.status}`, 'API');
 
+    const rawBody = await response.text();
+
     // Handle error responses
     if (!response.ok) {
-      const errorText = await response.text();
-      logger.error(`API error response: ${errorText}`, 'API');
+      logger.error(`API error response: ${rawBody}`, 'API');
       throw new APIError(
-        `WordPress API error (${response.status}): ${errorText}`,
+        `WordPress API error (${response.status}): ${rawBody}`,
         response.status,
         url,
-        errorText
+        rawBody
       );
     }
 
-    const responseData = await response.json();
-    
+    // MCP Streamable HTTP transport may respond with either application/json
+    // (single-shot) or text/event-stream (SSE frames). Branch on Content-Type.
+    const contentType = response.headers.get('content-type') ?? '';
+    let responseData: unknown;
+    if (contentType.includes('text/event-stream')) {
+      responseData = parseSSEMessage(rawBody);
+      logger.debug('Parsed text/event-stream response body', 'API');
+    } else {
+      responseData = JSON.parse(rawBody);
+    }
+
     // Accept session updates whenever WordPress provides one.
     const sessionIdHeader = response.headers.get('Mcp-Session-Id');
     if (sessionIdHeader) {
       updateSessionId(sessionIdHeader);
     }
-    
+
     logger.api('Response received successfully');
     logger.debug(`Response data: ${JSON.stringify(responseData)}`, 'API');
-    
+
     // Handle response format based on transport type
     if (useJsonRpc && responseData && typeof responseData === 'object') {
       const jsonrpcResponse = responseData as any; // Type assertion for JSON-RPC response
@@ -434,7 +480,7 @@ async function executeWordPressRequest(
         }
       }
     }
-    
+
     // For simple transport or non-JSON-RPC responses, return response as-is
     return {
       responseData: responseData as WordPressResponse,
