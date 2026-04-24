@@ -264,11 +264,12 @@ describe('Configuration Module', () => {
         JWT_TOKEN: 'test-token',
       });
 
-      const { getConfigHealthStatus } = await import('../../src/lib/config.js');
+      const { getConfigHealthStatus, MCP_WORDPRESS_REMOTE_VERSION } =
+        await import('../../src/lib/config.js');
       const status = getConfigHealthStatus();
 
       expect(status.status).toBe('healthy');
-      expect(status.version).toBe('0.2.19');
+      expect(status.version).toBe(MCP_WORDPRESS_REMOTE_VERSION);
       expect(status.uptime).toBeGreaterThan(0);
       expect(status.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     });
