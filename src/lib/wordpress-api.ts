@@ -37,8 +37,9 @@ let lastInitializeRequest: { requestData: any; useJsonRpc: boolean } | null = nu
 let sessionRefreshPromise: Promise<void> | null = null;
 
 const WP_MCP_ENDPOINT = '/wp/v2/wpmcp';
-const INVALID_SESSION_ERROR_CODE = -32602;
+const INVALID_SESSION_ERROR_CODES = new Set([-32602, -32005]);
 const INVALID_SESSION_ERROR_MESSAGE = 'Invalid or expired session';
+const SESSION_NOT_FOUND_ERROR_MESSAGE = 'Session not found';
 
 function validateEnvironment() {
   const validation = validateConfig();
@@ -253,9 +254,19 @@ function parseApiErrorResponse(error: APIError): any {
 
 function isInvalidSessionError(error: APIError): boolean {
   const errorResponse = parseApiErrorResponse(error);
+  const jsonRpcError =
+    errorResponse?.error && typeof errorResponse.error === 'object'
+      ? errorResponse.error
+      : errorResponse;
+  const code = typeof jsonRpcError?.code === 'number' ? jsonRpcError.code : null;
+  const message = typeof jsonRpcError?.message === 'string' ? jsonRpcError.message : '';
+
   return (
-    errorResponse?.code === INVALID_SESSION_ERROR_CODE &&
-    errorResponse?.message === INVALID_SESSION_ERROR_MESSAGE
+    code !== null &&
+    INVALID_SESSION_ERROR_CODES.has(code) &&
+    (message === INVALID_SESSION_ERROR_MESSAGE ||
+      message.includes(SESSION_NOT_FOUND_ERROR_MESSAGE) ||
+      message.includes(INVALID_SESSION_ERROR_MESSAGE))
   );
 }
 

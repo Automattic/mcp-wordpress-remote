@@ -531,6 +531,81 @@ describe('WordPress API Module', () => {
         expect(nock.isDone()).toBe(true);
       });
 
+      it('should refresh the session for WPCOM session-not-found errors returned as HTTP JSON-RPC responses', async () => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://public-api.wordpress.com/wpcom/v2/mcp/v1',
+          JWT_TOKEN: 'test-token',
+        });
+
+        const initializeRequest = {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            clientInfo: {
+              name: 'test-client',
+              version: '1.0.0',
+            },
+            _proxy_request_id: 1,
+          },
+        };
+        const toolRequest = {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: {
+            name: 'wpcom-mcp-account',
+            arguments: {
+              action: 'list',
+            },
+          },
+        };
+
+        const initHeaders: Array<string | undefined> = [];
+        let initCallCount = 0;
+
+        nock('https://public-api.wordpress.com')
+          .post('/wpcom/v2/mcp/v1', initializeRequest)
+          .twice()
+          .reply(function () {
+            const header = this.req.headers['mcp-session-id'];
+            initHeaders.push(Array.isArray(header) ? header[0] : (header as string | undefined));
+            initCallCount += 1;
+
+            return [
+              200,
+              createJsonRpcResult(1, { protocolVersion: '2025-06-18' }),
+              {
+                'Mcp-Session-Id': initCallCount === 1 ? 'session-1' : 'session-2',
+              },
+            ];
+          });
+
+        nock('https://public-api.wordpress.com')
+          .post('/wpcom/v2/mcp/v1', toolRequest)
+          .matchHeader('mcp-session-id', 'session-1')
+          .reply(
+            404,
+            createJsonRpcError(2, -32005, 'Session not found: Invalid or expired session')
+          );
+
+        nock('https://public-api.wordpress.com')
+          .post('/wpcom/v2/mcp/v1', toolRequest)
+          .matchHeader('mcp-session-id', 'session-2')
+          .reply(200, createJsonRpcResult(2, { content: [], structuredContent: {} }));
+
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+
+        await wpRequest(initializeRequest, true);
+        await expect(wpRequest(toolRequest, true)).resolves.toEqual({
+          content: [],
+          structuredContent: {},
+        });
+
+        expect(initHeaders).toEqual([undefined, undefined]);
+        expect(nock.isDone()).toBe(true);
+      });
+
       it('should reuse a shared refresh when stale-session errors resolve out of order', async () => {
         restoreEnv = mockEnv({
           WP_API_URL: 'https://my-wp-site.com',
