@@ -198,7 +198,7 @@ async function doInitializeProxy(): Promise<void> {
   if (macProxy?.socks) {
     const { host, port } = macProxy.socks;
     const bracketedHost = host.includes(':') ? `[${host}]` : host;
-    const socksUrl = `socks5://${bracketedHost}:${port}`;
+    const socksUrl = `socks5h://${bracketedHost}:${port}`;
     proxyConfig = { type: 'env', envProxy: { url: socksUrl, type: 'socks' } };
     logger.info(`System SOCKS proxy configured: ${sanitizeProxyUrl(socksUrl)}`, 'PROXY');
     return;
@@ -251,7 +251,7 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
         // Parse "SOCKS host:port" or "SOCKS5 host:port" (case-insensitive)
         const socksMatch = directive.match(/SOCKS5?\s+(\S+):(\d+)/i);
         if (socksMatch) {
-          const proxyUrl = `socks5://${socksMatch[1]}:${socksMatch[2]}`;
+          const proxyUrl = `socks5h://${socksMatch[1]}:${socksMatch[2]}`;
           logger.debug(`PAC returned SOCKS proxy for ${url}: ${sanitizeProxyUrl(proxyUrl)}`, 'PROXY');
           return new SocksProxyAgent(proxyUrl);
         }
