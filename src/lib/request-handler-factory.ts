@@ -4,6 +4,7 @@
  * Creates standardized request handlers to eliminate repetitive code
  */
 
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './utils.js';
 import { wpRequest } from './wordpress-api.js';
 import { isAPIError } from './oauth-types.js';
@@ -31,7 +32,19 @@ export function createRequestHandler(config: HandlerConfig, context: SessionCont
     const init = await waitForInit(context);
     if (!init.ready) {
       const cause = init.reason === 'timeout' ? 'timed out waiting for' : 'failed during';
-      throw new Error(`Cannot process ${config.method}: WordPress connection ${cause} initialization`);
+      const message = `Cannot process ${config.method}: WordPress connection ${cause} initialization`;
+      // Surface the underlying cause in the JSON-RPC error `data` so the client
+      // can show why initialization failed (TLS, DNS, refused) instead of a
+      // bare internal error.
+      const data: Record<string, unknown> = { reason: init.reason };
+      if (init.reason === 'failed' && init.error) {
+        data.code = init.error.code;
+        data.detail = init.error.message;
+        if (init.error.hint) {
+          data.hint = init.error.hint;
+        }
+      }
+      throw new McpError(ErrorCode.InternalError, message, data);
     }
 
     // Map request parameters to WordPress format

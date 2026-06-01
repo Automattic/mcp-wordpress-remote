@@ -123,6 +123,10 @@ describe('dead backend integration', () => {
     // Instructions should indicate failure
     expect(initResponse.result.instructions).toMatch(/Connection Failed/i);
 
+    // Clients can detect the degraded state programmatically (issue #61)
+    // instead of string-matching the instructions field.
+    expect(caps.experimental).toEqual({ connectionFailed: true });
+
     // 2. Send initialized notification (required by MCP protocol before requests)
     send(proxy, {
       jsonrpc: '2.0',
@@ -147,6 +151,11 @@ describe('dead backend integration', () => {
     // The init-ready gate should have caught this and returned an error.
     expect(toolsResponse.error).toBeDefined();
     expect(toolsResponse.error.message).toMatch(/WordPress connection failed during initialization/);
+
+    // The error must carry the underlying cause in `data` so the client can
+    // explain why init failed, rather than a bare internal error (issue #61).
+    expect(toolsResponse.error.data).toBeDefined();
+    expect(toolsResponse.error.data.reason).toBe('failed');
   }, 30_000);
 
   // Healthy-backend integration test omitted: unit tests cover the happy path.

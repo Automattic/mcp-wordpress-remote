@@ -731,6 +731,35 @@ describe('WordPress API Module', () => {
         );
       });
 
+      it('should time out a slow request and report ETIMEDOUT', async () => {
+        // Regression for issue #61: an unbounded fetch let a stalled upstream
+        // hang the initialize handshake for ~60s. The request must now abort.
+        const timeoutMs = 80;
+        const replyDelay = timeoutMs + 50;
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+          WP_API_INIT_TIMEOUT_MS: String(timeoutMs),
+        });
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT)
+          .delay(replyDelay)
+          .reply(200, { status: 'success' });
+
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+        const { isAPIError } = await import('../../src/lib/oauth-types.js');
+
+        const error: any = await wpRequest({ method: 'initialize' }).catch((e: any) => e);
+        expect(isAPIError(error)).toBe(true);
+        expect(error.code).toBe('ETIMEDOUT');
+        expect(error.message).toMatch(/timed out after 80ms/);
+
+        // Let nock's delayed reply timer fire and clear before teardown so it
+        // doesn't leak into the worker (the request was already aborted).
+        await new Promise(resolve => setTimeout(resolve, replyDelay + 25));
+      });
+
       it('should throw APIError for invalid JSON responses', async () => {
         restoreEnv = mockEnv({
           WP_API_URL: 'https://my-wp-site.com',

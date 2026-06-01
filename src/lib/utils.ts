@@ -93,8 +93,11 @@ export function log(
 
   const logMessage = `${timestamp} [${levelName}] [${category}] ${message}${formattedArgs ? '\n' + formattedArgs : ''}\n`;
 
-  // Log to stderr to avoid interfering with MCP JSON-RPC communication on stdout
-  if (process.env.LOG_TO_STDERR === 'true') {
+  // Log to stderr to avoid interfering with MCP JSON-RPC communication on stdout.
+  // ERROR-level messages always go to stderr so failures are never silent —
+  // a connection failure must be diagnosable without opting in to LOG_TO_STDERR.
+  // Lower levels stay opt-in to avoid flooding stderr with routine logs.
+  if (level === LogLevel.ERROR || process.env.LOG_TO_STDERR === 'true') {
     process.stderr.write(logMessage);
   }
 

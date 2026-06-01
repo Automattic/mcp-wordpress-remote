@@ -74,7 +74,21 @@ describe('init-ready gate', () => {
       resolveInit(context, true);
 
       const result = await waitForInit(context);
-      expect(result).toEqual({ ready: false, reason: 'failed' });
+      expect(result).toEqual({ ready: false, reason: 'failed', error: undefined });
+    });
+
+    it('carries connection error details through the gate', async () => {
+      // Regression for issue #61: the underlying TLS/connection cause must
+      // survive init so handlers can surface it to the client.
+      const connectionError = {
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        message: 'fetch failed',
+        hint: 'set NODE_EXTRA_CA_CERTS ...',
+      };
+      resolveInit(context, true, connectionError);
+
+      const result = await waitForInit(context);
+      expect(result).toEqual({ ready: false, reason: 'failed', error: connectionError });
     });
 
     it('short-circuits after init already settled', async () => {
@@ -126,6 +140,27 @@ describe('init-ready gate', () => {
       await expect(handler({ params: {} })).rejects.toThrow(
         'Cannot process tools/list: WordPress connection failed during initialization'
       );
+    });
+
+    it('handler surfaces the connection cause in the error data', async () => {
+      // Regression for issue #61: the -32603 error must carry the underlying
+      // cause (code/detail/hint) so the client can show why init failed.
+      const handler = createRequestHandler(HANDLER_CONFIGS.listTools, context);
+
+      resolveInit(context, true, {
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        message: 'fetch failed',
+        hint: 'set NODE_EXTRA_CA_CERTS or NODE_USE_SYSTEM_CA',
+      });
+
+      const error: any = await handler({ params: {} }).catch((e: any) => e);
+      expect(error.code).toBe(-32603); // ErrorCode.InternalError
+      expect(error.data).toMatchObject({
+        reason: 'failed',
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        detail: 'fetch failed',
+        hint: 'set NODE_EXTRA_CA_CERTS or NODE_USE_SYSTEM_CA',
+      });
     });
 
     it('handler times out with error when init never completes', async () => {

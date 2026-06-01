@@ -6,6 +6,7 @@
 
 import { logger } from './utils.js';
 import { WPRequestParams, MCPRequest, TransportType } from './mcp-types.js';
+import { ConnectionErrorInfo } from './error-utils.js';
 
 /**
  * Session context for the proxy
@@ -20,6 +21,8 @@ export interface SessionContext {
     resolve: () => void;
     settled: boolean;
     failed: boolean;
+    /** Details of the failure when `failed` is true; surfaced to the client. */
+    error?: ConnectionErrorInfo;
   };
 }
 
@@ -98,10 +101,19 @@ export function createSessionContext(): SessionContext {
 /**
  * Signal that initialization completed (success or failure).
  * Unblocks all handlers waiting on waitForInit.
+ *
+ * @param context - The session context.
+ * @param failed  - Whether initialization failed.
+ * @param error   - Failure details to surface to the client (only when failed).
  */
-export function resolveInit(context: SessionContext, failed: boolean): void {
+export function resolveInit(
+  context: SessionContext,
+  failed: boolean,
+  error?: ConnectionErrorInfo
+): void {
   if (context._init.settled) return;
   context._init.failed = failed;
+  context._init.error = failed ? error : undefined;
   context._init.settled = true;
   context._init.resolve();
 }
@@ -113,12 +125,16 @@ const INIT_TIMEOUT_MS = 30_000;
  * Wait for initialization to complete before handling a request.
  * Returns true if the connection is ready, false if init failed or timed out.
  */
-export type InitResult = { ready: true } | { ready: false; reason: 'failed' | 'timeout' };
+export type InitResult =
+  | { ready: true }
+  | { ready: false; reason: 'failed' | 'timeout'; error?: ConnectionErrorInfo };
 
 export async function waitForInit(context: SessionContext, timeoutMs = INIT_TIMEOUT_MS): Promise<InitResult> {
   // Fast path: init already settled, no async work needed
   if (context._init.settled) {
-    return context._init.failed ? { ready: false, reason: 'failed' } : { ready: true };
+    return context._init.failed
+      ? { ready: false, reason: 'failed', error: context._init.error }
+      : { ready: true };
   }
 
   let timer: ReturnType<typeof setTimeout>;
@@ -134,5 +150,7 @@ export async function waitForInit(context: SessionContext, timeoutMs = INIT_TIME
     return { ready: false, reason: 'timeout' };
   }
 
-  return context._init.failed ? { ready: false, reason: 'failed' } : { ready: true };
+  return context._init.failed
+    ? { ready: false, reason: 'failed', error: context._init.error }
+    : { ready: true };
 }

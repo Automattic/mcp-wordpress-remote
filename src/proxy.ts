@@ -8,6 +8,7 @@ import { validateNodeVersion } from './lib/node-utils.js';
 import { setupFetchPolyfill } from './lib/fetch-utils.js';
 import { detectTransportType } from './lib/transport-detection.js';
 import { createSessionContext, resolveInit } from './lib/session-utils.js';
+import { describeConnectionError } from './lib/error-utils.js';
 import { createWrappedHandler, HANDLER_CONFIGS } from './lib/request-handler-factory.js';
 import { MCP_WORDPRESS_REMOTE_VERSION } from './lib/config.js';
 import {
@@ -114,13 +115,25 @@ async function WordPressProxy() {
         error
       );
 
-      // Mark init as failed and unblock waiting handlers (they'll return errors)
-      resolveInit(sessionContext, true);
+      // Describe the real cause (TLS/DNS/refused) — unwrap the `cause` set by
+      // transport detection — so logs and the client see the underlying error
+      // instead of a generic "connection failed".
+      const cause = (error as { cause?: unknown })?.cause ?? error;
+      const connectionError = describeConnectionError(cause);
+      if (connectionError.hint) {
+        logger.error(connectionError.hint, 'INIT');
+      }
+
+      // Mark init as failed and unblock waiting handlers (they'll return errors
+      // carrying these details to the client).
+      resolveInit(sessionContext, true, connectionError);
 
       const clientProtocolVersion = request?.params?.protocolVersion || '2025-06-18';
 
       // Return a fallback response with empty capabilities so the SDK
-      // doesn't try to list tools/resources/prompts for a dead connection
+      // doesn't try to list tools/resources/prompts for a dead connection.
+      // `experimental.connectionFailed` lets clients detect the degraded state
+      // programmatically rather than string-matching the instructions field.
       const fallbackResponse = {
         protocolVersion: clientProtocolVersion,
         serverInfo: {
@@ -133,8 +146,11 @@ async function WordPressProxy() {
           prompts: {},
           logging: {},
           completions: {},
+          experimental: { connectionFailed: true },
         },
-        instructions: 'MCP WordPress Remote Proxy Server (Connection Failed)',
+        instructions: `MCP WordPress Remote Proxy Server (Connection Failed${
+          connectionError.code ? `: ${connectionError.code}` : ''
+        })`,
       };
 
       logger.warn('⚠️ Using fallback initialize response', 'INIT');

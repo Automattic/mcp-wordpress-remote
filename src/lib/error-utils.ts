@@ -7,6 +7,97 @@
 import { APIError } from './oauth-types.js';
 
 /**
+ * Structured description of a connection-level failure (TLS, DNS, refused, etc.).
+ * Used to surface the underlying cause to logs and to the MCP client instead of
+ * swallowing it behind a generic "connection failed" message.
+ */
+export interface ConnectionErrorInfo {
+  /** The underlying Node error code, e.g. "UNABLE_TO_VERIFY_LEAF_SIGNATURE". */
+  code?: string;
+  /** Human-readable error message. */
+  message: string;
+  /** Actionable hint for resolving the failure, when the code is recognized. */
+  hint?: string;
+}
+
+/**
+ * Node/OpenSSL error codes that mean "the certificate chain is valid but its
+ * root is not in Node's trust store" — the mkcert / DDEV / corporate-CA case.
+ */
+const CA_TRUST_ERROR_CODES = new Set([
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'CERT_UNTRUSTED',
+]);
+
+const CA_TRUST_HINT =
+  'The server certificate was not trusted by Node.js. If the site uses a ' +
+  'locally-trusted or corporate CA (mkcert, DDEV, Laravel Valet, a VPN), make ' +
+  'Node trust it: set NODE_EXTRA_CA_CERTS to the CA file (e.g. the output of ' +
+  '`mkcert -CAROOT` plus rootCA.pem), or on Node 22.15+ set NODE_USE_SYSTEM_CA=1 ' +
+  'to trust the OS certificate store. As an insecure last resort, ' +
+  'NODE_TLS_REJECT_UNAUTHORIZED=0 disables verification entirely.';
+
+/**
+ * Walk the `cause` chain of an error and return the first string `code` found.
+ *
+ * Node's `fetch` (undici) wraps the real network/TLS error as a `TypeError`
+ * with the actual error in `.cause`, so the useful code is rarely on the
+ * top-level error.
+ */
+export function extractNetworkErrorCode(error: unknown): string | undefined {
+  let current: any = error;
+  for (let depth = 0; current && depth < 5; depth++) {
+    if (typeof current.code === 'string') {
+      return current.code;
+    }
+    current = current.cause;
+  }
+  return undefined;
+}
+
+/**
+ * Return an actionable hint for a known connection error code, or undefined.
+ */
+export function getConnectionErrorHint(code?: string): string | undefined {
+  if (!code) {
+    return undefined;
+  }
+
+  if (CA_TRUST_ERROR_CODES.has(code)) {
+    return CA_TRUST_HINT;
+  }
+
+  switch (code) {
+    case 'CERT_HAS_EXPIRED':
+      return 'The server certificate has expired. Renew it on the WordPress host.';
+    case 'ERR_TLS_CERT_ALTNAME_INVALID':
+      return 'The server certificate does not match the hostname in WP_API_URL. Check for a host/SAN mismatch.';
+    case 'ECONNREFUSED':
+      return 'The connection was refused. Check that WP_API_URL points to a running server and the right port.';
+    case 'ENOTFOUND':
+      return 'The host could not be resolved (DNS). Check WP_API_URL for typos.';
+    case 'ETIMEDOUT':
+    case 'UND_ERR_CONNECT_TIMEOUT':
+      return 'The connection timed out. Check network, firewall, or proxy settings.';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Describe a connection-level error: its code, message, and an actionable hint.
+ */
+export function describeConnectionError(error: unknown): ConnectionErrorInfo {
+  const code = extractNetworkErrorCode(error);
+  const message = error instanceof Error ? error.message : String(error);
+  return { code, message, hint: getConnectionErrorHint(code) };
+}
+
+/**
  * Maps HTTP status codes to MCP JSON-RPC error codes
  * Based on JSON-RPC 2.0 specification and MCP best practices
  */

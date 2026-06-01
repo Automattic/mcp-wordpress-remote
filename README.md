@@ -266,6 +266,12 @@ For WooCommerce-specific tools and reports:
 | `WP_MCP_CONFIG_DIR`           | Config directory override                        | `~/.mcp-auth`        | -                     |
 | `LOG_FILE`                    | Log file path                                    | -                    | -                     |
 | `LOG_LEVEL`                   | Log level (0-3)                                  | `2`                  | -                     |
+| `LOG_TO_STDERR`               | Mirror all log levels to stderr (errors always are) | `false`           | -                     |
+| `WP_API_TIMEOUT_MS`           | Request timeout for tool calls (ms)              | `120000`             | -                     |
+| `WP_API_INIT_TIMEOUT_MS`      | Timeout for the initialize handshake (ms)        | `25000`              | -                     |
+| **TLS / Certificates**        |                                                  |                      |                       |
+| `NODE_EXTRA_CA_CERTS`         | Path to an extra CA file to trust (mkcert/corporate CA) | -             | -                     |
+| `NODE_USE_SYSTEM_CA`          | Trust the OS certificate store (Node 22.15+)     | -                    | -                     |
 | **Legacy Authentication**     |                                                  |                      |                       |
 | `JWT_TOKEN`                   | JWT token for authentication                     | -                    | -                     |
 | `WP_API_USERNAME`             | WordPress username (legacy)                      | -                    | -                     |
