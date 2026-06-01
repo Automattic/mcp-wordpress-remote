@@ -113,9 +113,7 @@ export function createWrappedHandler(config: HandlerConfig, context: SessionCont
       });
       
       if (isAPIError(error)) {
-        // Simple transport returns errors as a tool result. convertAPIErrorToMcpError
-        // now carries the network code and hint, so a timeout/TLS failure is
-        // distinguishable here too.
+        // Simple transport returns errors as a tool result.
         if (context.transportType === 'simple') {
           logger.debug(`Converting APIError to MCP error format for ${config.name} (simple transport)`, 'MCP', {
             statusCode: error.statusCode,
@@ -125,22 +123,21 @@ export function createWrappedHandler(config: HandlerConfig, context: SessionCont
           return convertAPIErrorToMcpError(error);
         }
 
-        // JSON-RPC transport: WordPress JSON-RPC errors (statusCode != 0) are
-        // already well-formed and flow to the SDK unchanged. Below-HTTP failures
-        // (timeout, DNS, refused, TLS) carry statusCode 0 and are NOT WordPress
-        // JSON-RPC errors, so surface the real code and hint instead of a bare
-        // -32603 internal error.
-        if (error.statusCode === 0) {
-          logger.debug(`Converting network APIError to McpError for ${config.name}`, 'MCP', {
-            code: error.code,
-            endpoint: error.endpoint,
-            message: error.message,
-          });
-          throw apiErrorToMcpError(error);
-        }
+        // JSON-RPC transport: throw a faithful McpError. apiErrorToMcpError
+        // forwards a WordPress JSON-RPC error's original code/data, maps
+        // HTTP-status errors, and surfaces below-HTTP failures with code + hint.
+        // Throwing a plain Error here would let the SDK flatten everything to
+        // -32603 and drop WordPress's real error code.
+        logger.debug(`Converting APIError to McpError for ${config.name} (jsonrpc transport)`, 'MCP', {
+          statusCode: error.statusCode,
+          code: error.code,
+          endpoint: error.endpoint,
+          message: error.message,
+        });
+        throw apiErrorToMcpError(error);
       }
 
-      // For JSON-RPC WordPress errors or non-API errors, re-throw (MCP SDK will handle)
+      // Non-API errors: re-throw (MCP SDK will handle).
       throw error;
     }
   };

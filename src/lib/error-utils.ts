@@ -229,24 +229,54 @@ function buildApiErrorData(error: APIError): Record<string, unknown> {
 }
 
 /**
+ * The original WordPress JSON-RPC error, if this APIError wraps one.
+ *
+ * When WordPress returns a JSON-RPC error envelope, wpRequest stores that
+ * `{ code, message, data }` object as the APIError's `response`. We forward it
+ * verbatim so the proxy is transparent — the client sees WordPress's own error
+ * code, not a flattened internal error.
+ */
+function forwardedJsonRpcError(
+  error: APIError
+): { code: number; message?: string; data?: unknown } | null {
+  const response = error.response;
+  if (response && typeof response === 'object' && typeof (response as any).code === 'number') {
+    return response as { code: number; message?: string; data?: unknown };
+  }
+  return null;
+}
+
+/**
+ * Derive the MCP error code, message, and data for an APIError, covering all
+ * three failure sources:
+ *   - a WordPress JSON-RPC error  -> forward its original code, message, data
+ *   - an HTTP-status error        -> map the status, attach status/endpoint/body
+ *   - a below-HTTP failure (code 0: timeout/DNS/refused/TLS) -> map + code + hint
+ */
+function mcpErrorParts(error: APIError): { code: number; message: string; data?: unknown } {
+  const wpError = forwardedJsonRpcError(error);
+  if (wpError) {
+    return { code: wpError.code, message: wpError.message ?? error.message, data: wpError.data };
+  }
+  return { code: deriveMcpErrorCode(error), message: error.message, data: buildApiErrorData(error) };
+}
+
+/**
  * Converts an APIError to MCP error response format (used as a tool result on
  * the simple transport, where errors are returned rather than thrown).
  */
 export function convertAPIErrorToMcpError(error: APIError) {
-  return {
-    error: {
-      code: deriveMcpErrorCode(error),
-      message: error.message,
-      data: buildApiErrorData(error),
-    },
-  };
+  return { error: mcpErrorParts(error) };
 }
 
 /**
- * Convert an APIError into a thrown McpError, preserving the network code and
- * hint in `data`. Use for below-HTTP failures (timeout, DNS, refused, TLS) so
- * a JSON-RPC client sees the real cause instead of a bare internal error.
+ * Convert an APIError into a thrown McpError. Forwards a WordPress JSON-RPC
+ * error's original code/data, maps HTTP-status errors to a sensible MCP code,
+ * and surfaces below-HTTP failures (timeout, DNS, refused, TLS) with their code
+ * and hint — so a JSON-RPC client always sees the real cause, never a bare
+ * internal error.
  */
 export function apiErrorToMcpError(error: APIError): McpError {
-  return new McpError(deriveMcpErrorCode(error), error.message, buildApiErrorData(error));
+  const { code, message, data } = mcpErrorParts(error);
+  return new McpError(code, message, data);
 }

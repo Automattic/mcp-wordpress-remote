@@ -162,6 +162,28 @@ describe('init-ready gate', () => {
       expect(error.data?.hint).toMatch(/timed out/i);
     });
 
+    it('forwards a WordPress JSON-RPC error code to the client (not flattened to -32603)', async () => {
+      // The proxy must be transparent: WordPress's own error code reaches the
+      // client unchanged, instead of the SDK overwriting it with -32603.
+      nock.cleanAll();
+      nock('https://test-wp.example.com')
+        .post('/?rest_route=/wp/v2/wpmcp')
+        .reply(200, {
+          jsonrpc: '2.0',
+          id: 2,
+          error: { code: -32602, message: 'Invalid params', data: { field: 'title' } },
+        });
+
+      const handler = createWrappedHandler(HANDLER_CONFIGS.listTools, context);
+      context.transportType = 'jsonrpc';
+      resolveInit(context, false);
+
+      const error: any = await handler({ id: 2, params: {} }).catch((e: any) => e);
+      expect(error.code).toBe(-32602); // WordPress's original code, not -32603
+      expect(error.message).toMatch(/Invalid params/);
+      expect(error.data).toEqual({ field: 'title' });
+    });
+
     it('handler surfaces the connection cause in the error data', async () => {
       // Regression for issue #61: the -32603 error must carry the underlying
       // cause (code/detail/hint) so the client can show why init failed.

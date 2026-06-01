@@ -130,8 +130,8 @@ describe('error-utils connection error classification', () => {
 
       const converted = convertAPIErrorToMcpError(err);
       expect(converted.error.code).toBe(-32001); // TIMEOUT_ERROR
-      expect(converted.error.data.code).toBe('ETIMEDOUT');
-      expect(converted.error.data.hint).toMatch(/timed out/i);
+      expect((converted.error.data as any).code).toBe('ETIMEDOUT');
+      expect((converted.error.data as any).hint).toMatch(/timed out/i);
 
       const mcpError = apiErrorToMcpError(err);
       expect(mcpError.code).toBe(-32001);
@@ -139,12 +139,25 @@ describe('error-utils connection error classification', () => {
       expect((mcpError.data as any).hint).toMatch(/timed out/i);
     });
 
-    it('falls back to status-based mapping for HTTP errors without a network code', () => {
-      const err = new APIError('Unauthorized', 401, 'url', 'body');
+    it('maps an HTTP-status error to a sensible MCP code with the status in data', () => {
+      const err = new APIError('WordPress API error (401): Unauthorized', 401, 'url', 'body');
       const converted = convertAPIErrorToMcpError(err);
       expect(converted.error.code).toBe(-32010); // UNAUTHORIZED
-      expect(converted.error.data.code).toBeUndefined();
-      expect(converted.error.data.hint).toBeUndefined();
+      expect((converted.error.data as any).statusCode).toBe(401);
+      expect((converted.error.data as any).code).toBeUndefined();
+      expect((converted.error.data as any).hint).toBeUndefined();
+    });
+
+    it('forwards a WordPress JSON-RPC error verbatim (original code, message, data)', () => {
+      // wpRequest stores WordPress's JSON-RPC error object as the APIError response.
+      const wpError = { code: -32602, message: 'Invalid params', data: { field: 'title' } };
+      const err = new APIError('WordPress JSON-RPC error: Invalid params', -32602, 'url', wpError);
+
+      const mcpError = apiErrorToMcpError(err);
+      // The client must see WordPress's real code, not a flattened -32603.
+      expect(mcpError.code).toBe(-32602);
+      expect(mcpError.message).toMatch(/Invalid params/);
+      expect(mcpError.data).toEqual({ field: 'title' });
     });
   });
 });
