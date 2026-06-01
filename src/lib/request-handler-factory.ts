@@ -8,7 +8,7 @@ import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './utils.js';
 import { wpRequest } from './wordpress-api.js';
 import { isAPIError } from './oauth-types.js';
-import { convertAPIErrorToMcpError } from './error-utils.js';
+import { convertAPIErrorToMcpError, apiErrorToMcpError } from './error-utils.js';
 import { prepareRequest, waitForInit, SessionContext } from './session-utils.js';
 import { WPRequestParams } from './mcp-types.js';
 
@@ -112,18 +112,35 @@ export function createWrappedHandler(config: HandlerConfig, context: SessionCont
         requestId: request.id,
       });
       
-      // Only convert APIError to MCP error format for simple transport
-      // JSON-RPC transport already returns properly formatted JSON-RPC errors
-      if (isAPIError(error) && context.transportType === 'simple') {
-        logger.debug(`Converting APIError to MCP error format for ${config.name} (simple transport)`, 'MCP', {
-          statusCode: error.statusCode,
-          endpoint: error.endpoint,
-          message: error.message,
-        });
-        return convertAPIErrorToMcpError(error);
+      if (isAPIError(error)) {
+        // Simple transport returns errors as a tool result. convertAPIErrorToMcpError
+        // now carries the network code and hint, so a timeout/TLS failure is
+        // distinguishable here too.
+        if (context.transportType === 'simple') {
+          logger.debug(`Converting APIError to MCP error format for ${config.name} (simple transport)`, 'MCP', {
+            statusCode: error.statusCode,
+            endpoint: error.endpoint,
+            message: error.message,
+          });
+          return convertAPIErrorToMcpError(error);
+        }
+
+        // JSON-RPC transport: WordPress JSON-RPC errors (statusCode != 0) are
+        // already well-formed and flow to the SDK unchanged. Below-HTTP failures
+        // (timeout, DNS, refused, TLS) carry statusCode 0 and are NOT WordPress
+        // JSON-RPC errors, so surface the real code and hint instead of a bare
+        // -32603 internal error.
+        if (error.statusCode === 0) {
+          logger.debug(`Converting network APIError to McpError for ${config.name}`, 'MCP', {
+            code: error.code,
+            endpoint: error.endpoint,
+            message: error.message,
+          });
+          throw apiErrorToMcpError(error);
+        }
       }
-      
-      // For JSON-RPC transport or non-API errors, re-throw (MCP SDK will handle)
+
+      // For JSON-RPC WordPress errors or non-API errors, re-throw (MCP SDK will handle)
       throw error;
     }
   };

@@ -16,6 +16,7 @@ describe('init-ready gate', () => {
   let prepareRequest: any;
   let waitForInit: any;
   let createRequestHandler: any;
+  let createWrappedHandler: any;
   let HANDLER_CONFIGS: any;
   let context: any;
 
@@ -35,6 +36,7 @@ describe('init-ready gate', () => {
 
     const factoryMod = await import('../../src/lib/request-handler-factory.js');
     createRequestHandler = factoryMod.createRequestHandler;
+    createWrappedHandler = factoryMod.createWrappedHandler;
     HANDLER_CONFIGS = factoryMod.HANDLER_CONFIGS;
   });
 
@@ -140,6 +142,24 @@ describe('init-ready gate', () => {
       await expect(handler({ params: {} })).rejects.toThrow(
         'Cannot process tools/list: WordPress connection failed during initialization'
       );
+    });
+
+    it('surfaces a post-init network failure as an McpError with code and hint', async () => {
+      // Regression for issue #61 (#3): a request-time timeout/network failure
+      // must reach the client with the real code + hint, not a bare -32603.
+      nock.cleanAll();
+      const netErr: any = new Error('Connect Timeout Error');
+      netErr.code = 'ETIMEDOUT';
+      nock('https://test-wp.example.com').post('/?rest_route=/wp/v2/wpmcp').replyWithError(netErr);
+
+      const handler = createWrappedHandler(HANDLER_CONFIGS.listTools, context);
+      context.transportType = 'jsonrpc';
+      resolveInit(context, false);
+
+      const error: any = await handler({ id: 1, params: {} }).catch((e: any) => e);
+      expect(error.code).toBe(-32001); // TIMEOUT_ERROR, not generic -32603
+      expect(error.data?.code).toBe('ETIMEDOUT');
+      expect(error.data?.hint).toMatch(/timed out/i);
     });
 
     it('handler surfaces the connection cause in the error data', async () => {

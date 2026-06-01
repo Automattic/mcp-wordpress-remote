@@ -73,6 +73,19 @@ describe('detectTransportType', () => {
     await sleep(replyDelay + 25);
   });
 
+  it('does not fall back when undici reports a connect timeout (UND_ERR_CONNECT_TIMEOUT)', async () => {
+    // undici's own connect deadline can fire before our AbortSignal, surfacing
+    // a different code. It is still a timeout and must be treated as terminal.
+    const connectError: any = new Error('Connect Timeout Error');
+    connectError.code = 'UND_ERR_CONNECT_TIMEOUT';
+    nock(WP_HOST).post(WP_ENDPOINT).replyWithError(connectError);
+
+    const error: any = await detectTransportType(makeContext(), {}).catch((e: any) => e);
+
+    expect(error.message).toMatch(/timed out during initialization/);
+    expect(error.cause?.code).toBe('UND_ERR_CONNECT_TIMEOUT');
+  });
+
   it('falls back to simple transport when JSON-RPC fails for a non-timeout reason', async () => {
     // First (JSON-RPC) attempt returns a JSON-RPC error, second (simple) succeeds.
     nock(WP_HOST)

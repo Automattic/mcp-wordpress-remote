@@ -4,7 +4,11 @@
  * Provides functions for converting API errors to MCP-compliant error formats
  */
 
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { APIError } from './oauth-types.js';
+
+/** MCP JSON-RPC error code for a request timeout (per mapHttpStatusToMcpCode). */
+const MCP_TIMEOUT_ERROR_CODE = -32001;
 
 /**
  * Structured description of a connection-level failure (TLS, DNS, refused, etc.).
@@ -42,6 +46,27 @@ const CA_TRUST_HINT =
   'NODE_TLS_REJECT_UNAUTHORIZED=0 disables verification entirely.';
 
 /**
+ * Network error codes that mean "the request did not complete in time". A
+ * stalled upstream can surface any of these: our own AbortSignal.timeout
+ * normalizes to ETIMEDOUT, while undici's own connect/headers deadlines fire
+ * first with their own codes.
+ */
+const TIMEOUT_ERROR_CODES = new Set([
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+]);
+
+/**
+ * Whether a network error code represents a timeout. Used to decide that a
+ * failure is terminal (no transport fallback) and to map it to the MCP
+ * timeout error code.
+ */
+export function isTimeoutCode(code?: string): boolean {
+  return code != null && TIMEOUT_ERROR_CODES.has(code);
+}
+
+/**
  * Walk the `cause` chain of an error and return the first string `code` found.
  *
  * Node's `fetch` (undici) wraps the real network/TLS error as a `TypeError`
@@ -60,6 +85,26 @@ export function extractNetworkErrorCode(error: unknown): string | undefined {
 }
 
 /**
+ * Walk the `cause` chain and return the deepest (most specific) error message.
+ *
+ * undici reports TLS/network failures as a top-level `TypeError: fetch failed`
+ * whose `cause` carries the real detail (e.g. "unable to verify the first
+ * certificate"). Preferring the leaf keeps that detail instead of collapsing
+ * to the generic wrapper text.
+ */
+export function extractNetworkErrorMessage(error: unknown): string {
+  let current: any = error;
+  let message = error instanceof Error ? error.message : String(error);
+  for (let depth = 0; current && depth < 5; depth++) {
+    if (current instanceof Error && current.message) {
+      message = current.message;
+    }
+    current = current.cause;
+  }
+  return message;
+}
+
+/**
  * Return an actionable hint for a known connection error code, or undefined.
  */
 export function getConnectionErrorHint(code?: string): string | undefined {
@@ -71,6 +116,10 @@ export function getConnectionErrorHint(code?: string): string | undefined {
     return CA_TRUST_HINT;
   }
 
+  if (isTimeoutCode(code)) {
+    return 'The connection timed out. Check network, firewall, or proxy settings, or raise WP_API_TIMEOUT_MS / WP_API_INIT_TIMEOUT_MS.';
+  }
+
   switch (code) {
     case 'CERT_HAS_EXPIRED':
       return 'The server certificate has expired. Renew it on the WordPress host.';
@@ -80,9 +129,6 @@ export function getConnectionErrorHint(code?: string): string | undefined {
       return 'The connection was refused. Check that WP_API_URL points to a running server and the right port.';
     case 'ENOTFOUND':
       return 'The host could not be resolved (DNS). Check WP_API_URL for typos.';
-    case 'ETIMEDOUT':
-    case 'UND_ERR_CONNECT_TIMEOUT':
-      return 'The connection timed out. Check network, firewall, or proxy settings.';
     default:
       return undefined;
   }
@@ -150,18 +196,57 @@ export function mapHttpStatusToMcpCode(statusCode: number): number {
 }
 
 /**
- * Converts an APIError to MCP error response format
+ * Pick the MCP error code for an APIError. Timeout-class network failures
+ * (statusCode 0 with a timeout code) map to the timeout code rather than the
+ * generic internal error that statusCode 0 would otherwise produce.
+ */
+function deriveMcpErrorCode(error: APIError): number {
+  if (isTimeoutCode(error.code)) {
+    return MCP_TIMEOUT_ERROR_CODE;
+  }
+  return mapHttpStatusToMcpCode(error.statusCode);
+}
+
+/**
+ * Build the `data` payload for an APIError, including the underlying network
+ * code and an actionable hint when available, so the client can tell a timeout
+ * or TLS failure apart from a generic internal error.
+ */
+function buildApiErrorData(error: APIError): Record<string, unknown> {
+  const data: Record<string, unknown> = {
+    statusCode: error.statusCode,
+    endpoint: error.endpoint,
+    response: error.response,
+  };
+  if (error.code) {
+    data.code = error.code;
+  }
+  const hint = getConnectionErrorHint(error.code);
+  if (hint) {
+    data.hint = hint;
+  }
+  return data;
+}
+
+/**
+ * Converts an APIError to MCP error response format (used as a tool result on
+ * the simple transport, where errors are returned rather than thrown).
  */
 export function convertAPIErrorToMcpError(error: APIError) {
   return {
     error: {
-      code: mapHttpStatusToMcpCode(error.statusCode),
+      code: deriveMcpErrorCode(error),
       message: error.message,
-      data: {
-        statusCode: error.statusCode,
-        endpoint: error.endpoint,
-        response: error.response,
-      },
+      data: buildApiErrorData(error),
     },
   };
+}
+
+/**
+ * Convert an APIError into a thrown McpError, preserving the network code and
+ * hint in `data`. Use for below-HTTP failures (timeout, DNS, refused, TLS) so
+ * a JSON-RPC client sees the real cause instead of a bare internal error.
+ */
+export function apiErrorToMcpError(error: APIError): McpError {
+  return new McpError(deriveMcpErrorCode(error), error.message, buildApiErrorData(error));
 }

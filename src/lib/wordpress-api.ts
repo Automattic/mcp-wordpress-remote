@@ -9,7 +9,11 @@ import { logger, LogLevel } from './utils.js';
 import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from './config.js';
 import { proxyFetch } from './fetch-utils.js';
 import { WPTokens, AuthError, APIError } from './oauth-types.js';
-import { extractNetworkErrorCode, getConnectionErrorHint } from './error-utils.js';
+import {
+  extractNetworkErrorCode,
+  extractNetworkErrorMessage,
+  getConnectionErrorHint,
+} from './error-utils.js';
 import {
   getValidTokens,
   generateServerUrlHash,
@@ -521,11 +525,11 @@ async function executeWordPressRequest(
     const isTimeout = errorName === 'TimeoutError' || errorName === 'AbortError';
     const code = isTimeout ? 'ETIMEDOUT' : extractNetworkErrorCode(error);
     const hint = getConnectionErrorHint(code);
+    // Prefer the deepest cause message so a TLS detail ("unable to verify the
+    // first certificate") survives instead of undici's generic "fetch failed".
     const errorMessage = isTimeout
       ? `WordPress API request timed out after ${timeoutMs}ms`
-      : error instanceof Error
-        ? error.message
-        : String(error);
+      : extractNetworkErrorMessage(error);
     logger.error(`Error in wpRequest: ${errorMessage}${code ? ` (${code})` : ''}`, 'API');
     if (hint) {
       logger.error(hint, 'API');

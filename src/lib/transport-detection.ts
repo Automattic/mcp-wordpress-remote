@@ -7,6 +7,7 @@
 import { logger } from './utils.js';
 import { wpRequest, getSessionId } from './wordpress-api.js';
 import { APIError } from './oauth-types.js';
+import { isTimeoutCode } from './error-utils.js';
 import { InitializeResult } from './types.js';
 import { TransportType } from './mcp-types.js';
 import { addSessionInfo, SessionContext } from './session-utils.js';
@@ -105,7 +106,9 @@ export async function detectTransportType(context: SessionContext, initParams?: 
     // A timeout means the upstream is unreachable or stalled, not that it
     // speaks a different transport. Retrying with simple transport would just
     // hang for another full timeout, so fail fast and preserve the cause.
-    if (error instanceof APIError && error.code === 'ETIMEDOUT') {
+    // Covers our AbortSignal timeout (ETIMEDOUT) and undici's own connect/
+    // headers deadlines, which can fire first with their own codes.
+    if (error instanceof APIError && isTimeoutCode(error.code)) {
       logger.error(
         '❌ JSON-RPC transport timed out; skipping simple transport fallback',
         'TRANSPORT_DETECT',

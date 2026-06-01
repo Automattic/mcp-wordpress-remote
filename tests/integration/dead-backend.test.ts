@@ -16,6 +16,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { once } from 'events';
 import { join } from 'path';
+import { InitializeResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const PROXY_PATH = join(process.cwd(), 'dist/proxy.js');
 
@@ -124,8 +125,14 @@ describe('dead backend integration', () => {
     expect(initResponse.result.instructions).toMatch(/Connection Failed/i);
 
     // Clients can detect the degraded state programmatically (issue #61)
-    // instead of string-matching the instructions field.
-    expect(caps.experimental).toEqual({ connectionFailed: true });
+    // instead of string-matching the instructions field. The value must be an
+    // object — the MCP ServerCapabilities schema rejects a boolean here.
+    expect(caps.experimental?.connectionFailed).toBeDefined();
+    expect(typeof caps.experimental.connectionFailed).toBe('object');
+
+    // The fallback initialize result must satisfy the SDK schema, or a strict
+    // client would reject the degraded handshake outright.
+    expect(() => InitializeResultSchema.parse(initResponse.result)).not.toThrow();
 
     // 2. Send initialized notification (required by MCP protocol before requests)
     send(proxy, {

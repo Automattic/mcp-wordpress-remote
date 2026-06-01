@@ -8,9 +8,14 @@
 
 import {
   extractNetworkErrorCode,
+  extractNetworkErrorMessage,
   getConnectionErrorHint,
   describeConnectionError,
+  isTimeoutCode,
+  convertAPIErrorToMcpError,
+  apiErrorToMcpError,
 } from '../../src/lib/error-utils.js';
+import { APIError } from '../../src/lib/oauth-types.js';
 
 describe('error-utils connection error classification', () => {
   describe('extractNetworkErrorCode', () => {
@@ -85,6 +90,61 @@ describe('error-utils connection error classification', () => {
       expect(result.code).toBeUndefined();
       expect(result.message).toBe('something odd');
       expect(result.hint).toBeUndefined();
+    });
+  });
+
+  describe('isTimeoutCode', () => {
+    it.each(['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT'])(
+      'treats %s as a timeout',
+      code => {
+        expect(isTimeoutCode(code)).toBe(true);
+        // Timeout codes also resolve to the timeout hint.
+        expect(getConnectionErrorHint(code)).toMatch(/timed out/i);
+      }
+    );
+
+    it('is false for non-timeout and missing codes', () => {
+      expect(isTimeoutCode('ECONNREFUSED')).toBe(false);
+      expect(isTimeoutCode(undefined)).toBe(false);
+    });
+  });
+
+  describe('extractNetworkErrorMessage', () => {
+    it('returns the deepest cause message, not the wrapper', () => {
+      const leaf = Object.assign(new Error('unable to verify the first certificate'), {
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      });
+      const wrapper = Object.assign(new TypeError('fetch failed'), { cause: leaf });
+      expect(extractNetworkErrorMessage(wrapper)).toBe('unable to verify the first certificate');
+    });
+
+    it('falls back to the top-level message when there is no cause', () => {
+      expect(extractNetworkErrorMessage(new Error('boom'))).toBe('boom');
+      expect(extractNetworkErrorMessage('a string')).toBe('a string');
+    });
+  });
+
+  describe('MCP error conversion carries the network code and hint', () => {
+    it('maps a timeout APIError to the MCP timeout code with code + hint in data', () => {
+      const err = new APIError('WordPress API request timed out after 120000ms', 0, 'url', undefined, 'ETIMEDOUT');
+
+      const converted = convertAPIErrorToMcpError(err);
+      expect(converted.error.code).toBe(-32001); // TIMEOUT_ERROR
+      expect(converted.error.data.code).toBe('ETIMEDOUT');
+      expect(converted.error.data.hint).toMatch(/timed out/i);
+
+      const mcpError = apiErrorToMcpError(err);
+      expect(mcpError.code).toBe(-32001);
+      expect((mcpError.data as any).code).toBe('ETIMEDOUT');
+      expect((mcpError.data as any).hint).toMatch(/timed out/i);
+    });
+
+    it('falls back to status-based mapping for HTTP errors without a network code', () => {
+      const err = new APIError('Unauthorized', 401, 'url', 'body');
+      const converted = convertAPIErrorToMcpError(err);
+      expect(converted.error.code).toBe(-32010); // UNAUTHORIZED
+      expect(converted.error.data.code).toBeUndefined();
+      expect(converted.error.data.hint).toBeUndefined();
     });
   });
 });
