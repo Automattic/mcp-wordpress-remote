@@ -130,14 +130,15 @@ async function WordPressProxy() {
 
       const clientProtocolVersion = request?.params?.protocolVersion || '2025-06-18';
 
-      // Return a fallback response with empty capabilities so the SDK
-      // doesn't try to list tools/resources/prompts for a dead connection.
-      // `experimental.connectionFailed` lets clients detect the degraded state
-      // programmatically rather than string-matching the instructions field.
-      // The value is an object, not a boolean: the MCP ServerCapabilities schema
-      // requires every `experimental` entry to be an object, and a strict client
-      // would otherwise reject this initialize result. Its presence is the flag;
-      // the underlying code travels in the details below.
+      // Return a fallback response that advertises NO real capabilities — only
+      // `experimental.connectionFailed`. The connection is dead, so it cannot
+      // serve tools/resources/prompts/logging/completions; advertising them
+      // makes an eager SDK client call e.g. logging/setLevel during setup, which
+      // then fails and the client reports "Failed to connect" before it can read
+      // the degraded flag. Advertising nothing lets the client complete the
+      // handshake and detect the degraded state via experimental.connectionFailed
+      // (an object, since the MCP schema requires each experimental entry to be
+      // an object; its presence is the flag, the code travels inside).
       const fallbackResponse = {
         protocolVersion: clientProtocolVersion,
         serverInfo: {
@@ -145,11 +146,6 @@ async function WordPressProxy() {
           version: MCP_WORDPRESS_REMOTE_VERSION,
         },
         capabilities: {
-          tools: {},
-          resources: {},
-          prompts: {},
-          logging: {},
-          completions: {},
           experimental: { connectionFailed: connectionError.code ? { code: connectionError.code } : {} },
         },
         instructions: `MCP WordPress Remote Proxy Server (Connection Failed${

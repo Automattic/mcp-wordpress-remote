@@ -115,11 +115,15 @@ describe('dead backend integration', () => {
     expect(initResponse).toHaveProperty('id', 1);
     expect(initResponse.result).toBeDefined();
 
-    // Fallback response should have empty capabilities (no tools to list)
+    // The dead connection advertises NO real capabilities — listing tools/
+    // logging/etc. would make an eager client call them during setup and fail
+    // before it can read the degraded flag.
     const caps = initResponse.result.capabilities;
-    expect(caps.tools).toEqual({});
-    expect(caps.resources).toEqual({});
-    expect(caps.prompts).toEqual({});
+    expect(caps.tools).toBeUndefined();
+    expect(caps.resources).toBeUndefined();
+    expect(caps.prompts).toBeUndefined();
+    expect(caps.logging).toBeUndefined();
+    expect(caps.completions).toBeUndefined();
 
     // Instructions should indicate failure
     expect(initResponse.result.instructions).toMatch(/Connection Failed/i);
