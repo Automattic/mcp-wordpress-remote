@@ -33,6 +33,42 @@ if (process.env.LOG_FILE) {
 }
 
 /**
+ * Format a single log argument for output.
+ *
+ * Error instances are expanded explicitly because JSON.stringify drops their
+ * most useful fields: `message` and `stack` are non-enumerable, so a plain
+ * Error serializes to `{}`. Custom errors such as APIError keep their extra
+ * own properties (statusCode, endpoint, response) which are merged in.
+ *
+ * @param arg - The argument to format
+ * @returns A string representation suitable for the log line
+ */
+function formatLogArg(arg: any): string {
+  if (arg instanceof Error) {
+    const errorInfo: Record<string, unknown> = {
+      name: arg.name,
+      message: arg.message,
+      stack: arg.stack,
+    };
+
+    // Merge in any extra own enumerable properties (e.g. statusCode, endpoint).
+    for (const key of Object.keys(arg)) {
+      if (!(key in errorInfo)) {
+        errorInfo[key] = (arg as any)[key];
+      }
+    }
+
+    return JSON.stringify(errorInfo, null, 2);
+  }
+
+  if (typeof arg === 'object' && arg !== null) {
+    return JSON.stringify(arg, null, 2);
+  }
+
+  return String(arg);
+}
+
+/**
  * Enhanced logging function with levels and categories
  *
  * @param message - The message to log
@@ -53,10 +89,7 @@ export function log(
 
   const timestamp = new Date().toISOString();
   const levelName = LogLevel[level];
-  const formattedArgs =
-    args.length > 0
-      ? args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg)).join(' ')
-      : '';
+  const formattedArgs = args.length > 0 ? args.map(formatLogArg).join(' ') : '';
 
   const logMessage = `${timestamp} [${levelName}] [${category}] ${message}${formattedArgs ? '\n' + formattedArgs : ''}\n`;
 

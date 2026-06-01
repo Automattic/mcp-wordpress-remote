@@ -93,6 +93,53 @@ describe('Utils Module', () => {
       );
     });
 
+    it('should include Error message and stack in log output', async () => {
+      restoreEnv = mockEnv({
+        LOG_TO_STDERR: 'true',
+        LOG_LEVEL: '3', // DEBUG level to see the message
+      });
+
+      const { log, LogLevel } = await import('../../src/lib/utils.js');
+
+      log('Init failed', LogLevel.ERROR, 'INIT', new Error('connection refused'));
+
+      // Plain JSON.stringify(new Error()) returns "{}" — the message must survive.
+      expect(process.stderr.write).toHaveBeenCalledWith(
+        expect.stringMatching(/"message":\s*"connection refused"/)
+      );
+      expect(process.stderr.write).toHaveBeenCalledWith(
+        expect.stringMatching(/"name":\s*"Error"/)
+      );
+      expect(process.stderr.write).toHaveBeenCalledWith(expect.stringMatching(/"stack":/));
+    });
+
+    it('should include custom error properties like statusCode and endpoint', async () => {
+      restoreEnv = mockEnv({
+        LOG_TO_STDERR: 'true',
+        LOG_LEVEL: '3',
+      });
+
+      const { log, LogLevel } = await import('../../src/lib/utils.js');
+
+      // Simulate an APIError shape: Error subclass with extra own properties.
+      const apiError = new Error('Request failed with status 404');
+      apiError.name = 'APIError';
+      (apiError as any).statusCode = 404;
+      (apiError as any).endpoint = 'https://example.com/?rest_route=/wp/v2/wpmcp';
+
+      log('WordPress request failed', LogLevel.ERROR, 'API', apiError);
+
+      expect(process.stderr.write).toHaveBeenCalledWith(
+        expect.stringMatching(/"message":\s*"Request failed with status 404"/)
+      );
+      expect(process.stderr.write).toHaveBeenCalledWith(
+        expect.stringMatching(/"statusCode":\s*404/)
+      );
+      expect(process.stderr.write).toHaveBeenCalledWith(
+        expect.stringMatching(/"endpoint":\s*"https:\/\/example\.com\/\?rest_route=\/wp\/v2\/wpmcp"/)
+      );
+    });
+
     it('should respect log level filtering', async () => {
       restoreEnv = mockEnv({
         LOG_TO_STDERR: 'true',
