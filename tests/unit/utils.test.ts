@@ -63,6 +63,33 @@ describe('Utils Module', () => {
       expect(process.stderr.write).not.toHaveBeenCalled();
     });
 
+    it('should always write ERROR-level logs to stderr even when LOG_TO_STDERR is not set', async () => {
+      // Regression test for issue #61: init/connection failures were silent
+      // because logs only reached stderr when LOG_TO_STDERR=true. Errors must
+      // always be visible so a failure is self-diagnosable.
+      restoreEnv = mockEnv({});
+
+      const { log, LogLevel } = await import('../../src/lib/utils.js');
+
+      log('Connection failed', LogLevel.ERROR, 'INIT');
+
+      expect(process.stderr.write).toHaveBeenCalledWith(
+        expect.stringMatching(/\[ERROR\] \[INIT\] Connection failed\n$/)
+      );
+    });
+
+    it('should still gate non-error levels behind LOG_TO_STDERR', async () => {
+      restoreEnv = mockEnv({ LOG_LEVEL: '3' });
+
+      const { log, LogLevel } = await import('../../src/lib/utils.js');
+
+      log('Warn message', LogLevel.WARN, 'TEST');
+      log('Info message', LogLevel.INFO, 'TEST');
+      log('Debug message', LogLevel.DEBUG, 'TEST');
+
+      expect(process.stderr.write).not.toHaveBeenCalled();
+    });
+
     it('should log with default level INFO and category GENERAL', async () => {
       restoreEnv = mockEnv({
         LOG_TO_STDERR: 'true',

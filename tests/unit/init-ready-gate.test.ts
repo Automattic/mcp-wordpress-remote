@@ -16,6 +16,7 @@ describe('init-ready gate', () => {
   let prepareRequest: any;
   let waitForInit: any;
   let createRequestHandler: any;
+  let createWrappedHandler: any;
   let HANDLER_CONFIGS: any;
   let context: any;
 
@@ -35,6 +36,7 @@ describe('init-ready gate', () => {
 
     const factoryMod = await import('../../src/lib/request-handler-factory.js');
     createRequestHandler = factoryMod.createRequestHandler;
+    createWrappedHandler = factoryMod.createWrappedHandler;
     HANDLER_CONFIGS = factoryMod.HANDLER_CONFIGS;
   });
 
@@ -74,7 +76,21 @@ describe('init-ready gate', () => {
       resolveInit(context, true);
 
       const result = await waitForInit(context);
-      expect(result).toEqual({ ready: false, reason: 'failed' });
+      expect(result).toEqual({ ready: false, reason: 'failed', error: undefined });
+    });
+
+    it('carries connection error details through the gate', async () => {
+      // Regression for issue #61: the underlying TLS/connection cause must
+      // survive init so handlers can surface it to the client.
+      const connectionError = {
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        message: 'fetch failed',
+        hint: 'set NODE_EXTRA_CA_CERTS ...',
+      };
+      resolveInit(context, true, connectionError);
+
+      const result = await waitForInit(context);
+      expect(result).toEqual({ ready: false, reason: 'failed', error: connectionError });
     });
 
     it('short-circuits after init already settled', async () => {
@@ -126,6 +142,67 @@ describe('init-ready gate', () => {
       await expect(handler({ params: {} })).rejects.toThrow(
         'Cannot process tools/list: WordPress connection failed during initialization'
       );
+    });
+
+    it('surfaces a post-init network failure as an McpError with code and hint', async () => {
+      // Regression for issue #61 (#3): a request-time timeout/network failure
+      // must reach the client with the real code + hint, not a bare -32603.
+      nock.cleanAll();
+      const netErr: any = new Error('Connect Timeout Error');
+      netErr.code = 'ETIMEDOUT';
+      nock('https://test-wp.example.com').post('/?rest_route=/wp/v2/wpmcp').replyWithError(netErr);
+
+      const handler = createWrappedHandler(HANDLER_CONFIGS.listTools, context);
+      context.transportType = 'jsonrpc';
+      resolveInit(context, false);
+
+      const error: any = await handler({ id: 1, params: {} }).catch((e: any) => e);
+      expect(error.code).toBe(-32001); // TIMEOUT_ERROR, not generic -32603
+      expect(error.data?.code).toBe('ETIMEDOUT');
+      expect(error.data?.hint).toMatch(/timed out/i);
+    });
+
+    it('forwards a WordPress JSON-RPC error code to the client (not flattened to -32603)', async () => {
+      // The proxy must be transparent: WordPress's own error code reaches the
+      // client unchanged, instead of the SDK overwriting it with -32603.
+      nock.cleanAll();
+      nock('https://test-wp.example.com')
+        .post('/?rest_route=/wp/v2/wpmcp')
+        .reply(200, {
+          jsonrpc: '2.0',
+          id: 2,
+          error: { code: -32602, message: 'Invalid params', data: { field: 'title' } },
+        });
+
+      const handler = createWrappedHandler(HANDLER_CONFIGS.listTools, context);
+      context.transportType = 'jsonrpc';
+      resolveInit(context, false);
+
+      const error: any = await handler({ id: 2, params: {} }).catch((e: any) => e);
+      expect(error.code).toBe(-32602); // WordPress's original code, not -32603
+      expect(error.message).toMatch(/Invalid params/);
+      expect(error.data).toEqual({ field: 'title' });
+    });
+
+    it('handler surfaces the connection cause in the error data', async () => {
+      // Regression for issue #61: the -32603 error must carry the underlying
+      // cause (code/detail/hint) so the client can show why init failed.
+      const handler = createRequestHandler(HANDLER_CONFIGS.listTools, context);
+
+      resolveInit(context, true, {
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        message: 'fetch failed',
+        hint: 'set NODE_EXTRA_CA_CERTS or NODE_USE_SYSTEM_CA',
+      });
+
+      const error: any = await handler({ params: {} }).catch((e: any) => e);
+      expect(error.code).toBe(-32603); // ErrorCode.InternalError
+      expect(error.data).toMatchObject({
+        reason: 'failed',
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        detail: 'fetch failed',
+        hint: 'set NODE_EXTRA_CA_CERTS or NODE_USE_SYSTEM_CA',
+      });
     });
 
     it('handler times out with error when init never completes', async () => {

@@ -134,13 +134,16 @@ export class APIError extends Error {
   public readonly statusCode: number;
   public readonly endpoint: string;
   public readonly response?: any;
+  /** Underlying network/TLS error code (e.g. "UNABLE_TO_VERIFY_LEAF_SIGNATURE"), when the failure was below the HTTP layer. */
+  public readonly code?: string;
 
-  constructor(message: string, statusCode: number, endpoint: string, response?: any) {
+  constructor(message: string, statusCode: number, endpoint: string, response?: any, code?: string) {
     super(message);
     this.name = 'APIError';
     this.statusCode = statusCode;
     this.endpoint = endpoint;
     this.response = response;
+    this.code = code;
 
     // Ensure proper prototype chain
     Object.setPrototypeOf(this, APIError.prototype);

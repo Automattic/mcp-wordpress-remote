@@ -10,6 +10,11 @@ import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from 
 import { proxyFetch } from './fetch-utils.js';
 import { WPTokens, AuthError, APIError } from './oauth-types.js';
 import {
+  extractNetworkErrorCode,
+  extractNetworkErrorMessage,
+  getConnectionErrorHint,
+} from './error-utils.js';
+import {
   getValidTokens,
   generateServerUrlHash,
   cleanupExpiredTokens,
@@ -422,16 +427,24 @@ async function executeWordPressRequest(
     }
   }
 
+  // Bound the request so a stalled upstream fails fast with a clear error
+  // instead of hanging until the OS TCP timeout. The initialize handshake —
+  // what the MCP client waits on at startup — gets the tighter budget.
+  const timeoutMs = isInitializeRequest(requestData)
+    ? CONFIG.WP_API_INIT_TIMEOUT
+    : CONFIG.WP_API_TIMEOUT;
+
   const fetchOptions: RequestInit = {
     method,
     headers,
     body: JSON.stringify(requestData),
+    signal: AbortSignal.timeout(timeoutMs),
   };
 
   try {
     logger.api('Sending request to WordPress API...');
     logger.debug(`Request URL: ${url}`, 'API');
-    logger.debug(`Request method: ${method}`, 'API');
+    logger.debug(`Request method: ${method} (timeout ${timeoutMs}ms)`, 'API');
     const response = await proxyFetch(url, fetchOptions);
     logger.debug(`Response status: ${response.status}`, 'API');
 
@@ -502,9 +515,26 @@ async function executeWordPressRequest(
       throw error;
     }
 
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error(`Error in wpRequest: ${errorMessage}`, 'API');
-    throw new APIError(errorMessage, 0, url);
+    // Below-HTTP failure (TLS, DNS, refused, timeout). Surface the underlying
+    // code and an actionable hint so the cause is never swallowed.
+    // AbortSignal.timeout rejects with a DOMException named "TimeoutError"
+    // (node-fetch uses "AbortError"). DOMException is not `instanceof Error` in
+    // Node, so match on the name directly. Normalize to ETIMEDOUT so it carries
+    // a meaningful code and hint.
+    const errorName = (error as { name?: unknown })?.name;
+    const isTimeout = errorName === 'TimeoutError' || errorName === 'AbortError';
+    const code = isTimeout ? 'ETIMEDOUT' : extractNetworkErrorCode(error);
+    const hint = getConnectionErrorHint(code);
+    // Prefer the deepest cause message so a TLS detail ("unable to verify the
+    // first certificate") survives instead of undici's generic "fetch failed".
+    const errorMessage = isTimeout
+      ? `WordPress API request timed out after ${timeoutMs}ms`
+      : extractNetworkErrorMessage(error);
+    logger.error(`Error in wpRequest: ${errorMessage}${code ? ` (${code})` : ''}`, 'API');
+    if (hint) {
+      logger.error(hint, 'API');
+    }
+    throw new APIError(errorMessage, 0, url, undefined, code);
   }
 }
 
@@ -599,8 +629,9 @@ export async function wpRequest(
       throw error;
     }
 
+    const code = extractNetworkErrorCode(error);
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error(`Error in wpRequest: ${errorMessage}`, 'API');
-    throw new APIError(errorMessage, 0, getRequestUrl());
+    logger.error(`Error in wpRequest: ${errorMessage}${code ? ` (${code})` : ''}`, 'API');
+    throw new APIError(errorMessage, 0, getRequestUrl(), undefined, code);
   }
 }

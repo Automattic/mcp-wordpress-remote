@@ -6,6 +6,8 @@
 
 import { logger } from './utils.js';
 import { wpRequest, getSessionId } from './wordpress-api.js';
+import { APIError } from './oauth-types.js';
+import { isTimeoutCode } from './error-utils.js';
 import { InitializeResult } from './types.js';
 import { TransportType } from './mcp-types.js';
 import { addSessionInfo, SessionContext } from './session-utils.js';
@@ -101,7 +103,23 @@ export async function detectTransportType(context: SessionContext, initParams?: 
     logger.info('✅ JSON-RPC transport detected and working', 'TRANSPORT_DETECT');
     logger.debug('JSON-RPC initialization response:', 'TRANSPORT_DETECT', init);
   } catch (error) {
-    // If JSON-RPC fails, try simple format
+    // A timeout means the upstream is unreachable or stalled, not that it
+    // speaks a different transport. Retrying with simple transport would just
+    // hang for another full timeout, so fail fast and preserve the cause.
+    // Covers our AbortSignal timeout (ETIMEDOUT) and undici's own connect/
+    // headers deadlines, which can fire first with their own codes.
+    if (error instanceof APIError && isTimeoutCode(error.code)) {
+      logger.error(
+        '❌ JSON-RPC transport timed out; skipping simple transport fallback',
+        'TRANSPORT_DETECT',
+        error
+      );
+      const connectionError = new Error('WordPress connection timed out during initialization');
+      (connectionError as { cause?: unknown }).cause = error;
+      throw connectionError;
+    }
+
+    // If JSON-RPC fails for another reason, try simple format
     logger.warn('⚠️  JSON-RPC transport failed, trying simple transport...', 'TRANSPORT_DETECT');
     logger.debug('JSON-RPC error details:', 'TRANSPORT_DETECT', error);
     
@@ -126,7 +144,13 @@ export async function detectTransportType(context: SessionContext, initParams?: 
       logger.debug('Simple initialization response:', 'TRANSPORT_DETECT', init);
     } catch (simpleError) {
       logger.error('❌ Both JSON-RPC and simple transports failed', 'TRANSPORT_DETECT', simpleError);
-      throw new Error('Unable to establish connection with either transport type');
+      // Preserve the underlying failure as `cause` so the init handler can
+      // surface the real reason (TLS, DNS, refused) instead of a generic message.
+      // Assigned post-construction because the tsconfig lib predates the
+      // two-argument Error constructor.
+      const connectionError = new Error('Unable to establish connection with either transport type');
+      (connectionError as { cause?: unknown }).cause = simpleError;
+      throw connectionError;
     }
   }
   
