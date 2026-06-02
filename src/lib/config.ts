@@ -4,7 +4,7 @@ import { selectCallbackPort } from './port-utils.js';
 import { logger } from './utils.js';
 
 // Version constant - update this manually when releasing new versions
-export const MCP_WORDPRESS_REMOTE_VERSION = '0.3.3';
+export const MCP_WORDPRESS_REMOTE_VERSION = '0.3.4';
 
 /**
  * Parse a positive integer from an environment variable, falling back to a
