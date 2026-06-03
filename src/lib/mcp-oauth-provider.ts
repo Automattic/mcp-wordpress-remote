@@ -234,6 +234,16 @@ export class MCPOAuthProvider {
       return;
     }
 
+    // Reuse a previously registered client if one is persisted for this server.
+    // Without this, every fresh process with no in-memory clientId would mint a
+    // brand-new DCR client and orphan the prior registration server-side.
+    const storedClientInfo = await readClientInfo(this.serverUrlHash);
+    if (storedClientInfo?.client_id) {
+      this.config.clientId = storedClientInfo.client_id;
+      logger.oauth('Reusing persisted client registration, skipping dynamic registration');
+      return;
+    }
+
     if (!CONFIG.OAUTH_DYNAMIC_REGISTRATION) {
       throw new OAuthError(
         'No client ID provided and dynamic registration is disabled',
