@@ -35,11 +35,15 @@ describe('MCPOAuthProvider client registration', () => {
     });
     jest.resetModules();
     nock.cleanAll();
+    // Fail fast: any request without a matching interceptor throws instead of
+    // attempting a real connection to example.com.
+    nock.disableNetConnect();
   });
 
   afterEach(() => {
     if (restoreEnv) restoreEnv();
     nock.cleanAll();
+    nock.enableNetConnect();
     if (fsSync.existsSync(tempDir)) {
       fsSync.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -47,10 +51,16 @@ describe('MCPOAuthProvider client registration', () => {
 
   async function loadModules() {
     const { MCPOAuthProvider } = await import('../../src/lib/mcp-oauth-provider.js');
-    const { generateServerUrlHash, writeClientInfo, readClientInfo } = await import(
-      '../../src/lib/persistent-auth-config.js'
-    );
-    return { MCPOAuthProvider, generateServerUrlHash, writeClientInfo, readClientInfo };
+    const { generateServerUrlHash, writeClientInfo, readClientInfo, ensureConfigDir, getConfigFilePath } =
+      await import('../../src/lib/persistent-auth-config.js');
+    return {
+      MCPOAuthProvider,
+      generateServerUrlHash,
+      writeClientInfo,
+      readClientInfo,
+      ensureConfigDir,
+      getConfigFilePath,
+    };
   }
 
   function buildProvider(MCPOAuthProvider: any) {
@@ -78,17 +88,48 @@ describe('MCPOAuthProvider client registration', () => {
 
   it('registers exactly once and persists the result when no client is stored', async () => {
     const { MCPOAuthProvider, generateServerUrlHash, readClientInfo } = await loadModules();
-    const scope = nock(origin).post(registrationPath).reply(201, { client_id: 'new-client-456' });
+    let registerCalls = 0;
+    nock(origin)
+      .post(registrationPath)
+      .reply(201, () => {
+        registerCalls++;
+        return { client_id: 'new-client-456' };
+      });
 
     const provider = buildProvider(MCPOAuthProvider);
     await (provider as any).ensureClientRegistration();
 
-    expect(scope.isDone()).toBe(true); // the single interceptor was consumed exactly once
+    expect(registerCalls).toBe(1); // exactly one /register call, not merely "at least one"
     expect(provider.getConfig().clientId).toBe('new-client-456');
 
     const hash = generateServerUrlHash(serverUrl);
     const persisted = await readClientInfo(hash);
     expect(persisted?.client_id).toBe('new-client-456');
+  });
+
+  it('falls through to registration when stored client_info is corrupt (empty client_id)', async () => {
+    const { MCPOAuthProvider, generateServerUrlHash, readClientInfo, ensureConfigDir, getConfigFilePath } =
+      await loadModules();
+    await ensureConfigDir();
+    const hash = generateServerUrlHash(serverUrl);
+    // Structurally valid JSON but an unusable client_id — must not be promoted.
+    fsSync.writeFileSync(getConfigFilePath(hash, 'client_info.json'), JSON.stringify({ client_id: '' }));
+
+    let registerCalls = 0;
+    nock(origin)
+      .post(registrationPath)
+      .reply(201, () => {
+        registerCalls++;
+        return { client_id: 'fresh-after-corrupt' };
+      });
+
+    const provider = buildProvider(MCPOAuthProvider);
+    await (provider as any).ensureClientRegistration();
+
+    expect(registerCalls).toBe(1); // the empty client_id did not short-circuit registration
+    expect(provider.getConfig().clientId).toBe('fresh-after-corrupt');
+    const persisted = await readClientInfo(hash);
+    expect(persisted?.client_id).toBe('fresh-after-corrupt');
   });
 
   it('reuses the stored client even when tokens are absent/expired (re-auth, not re-register)', async () => {
