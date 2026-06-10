@@ -12,6 +12,7 @@
     "proxy"
   ],
   "author": "Automattic Inc.",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Automattic/mcp-wordpress-remote.git"
