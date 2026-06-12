@@ -38,6 +38,7 @@ npm install
 - `npm run build` - Build the project
 - `npm run build:watch` - Watch for changes and rebuild automatically
 - `npm run start` - Same as above
+- `npm run dev:oauth-html` - Build and start a localhost server to preview OAuth HTML (landing, callback, implicit flows). Open the printed URL (default `http://127.0.0.1:8765/`). If that port is busy, the next free port is used (up to +30) and a message is printed. Override the first port to try with `OAUTH_HTML_PREVIEW_PORT` / host with `OAUTH_HTML_PREVIEW_HOST`.
 - `npm run check` - Run type checking and linting
 - `npm run test` - Run tests
 - `npm run test:watch` - Run tests in watch mode
