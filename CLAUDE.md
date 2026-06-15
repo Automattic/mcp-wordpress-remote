@@ -10,13 +10,40 @@ MCP proxy server between Claude Code and a WordPress backend.
 
 "Works in repo" is not enough. Gate on "works from packed artifact in clean environment."
 
-1. Build and pack: `npm ci && npm run build && npm pack`
-2. Install tarball in a clean temp dir, run `npx mcp-wordpress-remote --help`
-3. Test against a healthy WordPress endpoint (normal init + tools/list flow)
-4. Test against a broken endpoint (fallback init, no malformed forwarding)
-5. Debug logs: verify no forwarded requests fire before init settles
-6. Publish canary first (`x.y.z-canary.1`), soak in real clients, then promote to latest
-7. Know the last good version — be ready for immediate dist-tag rollback
+1. Verify `MCP_WORDPRESS_REMOTE_VERSION` in `src/lib/config.ts` matches `package.json` — this constant is hardcoded and must be bumped manually alongside the package version.
+2. Build and pack: `npm ci && npm run build && npm pack`
+3. Install tarball in a clean temp dir, run the binary: `cd $(mktemp -d) && npm init -y && npm install /path/to/tarball && ./node_modules/.bin/mcp-wordpress-remote --help`
+4. Test against a healthy WordPress endpoint — send `initialize` + `tools/list` via stdin, confirm `serverInfo.version` matches the new version and tools are returned.
+5. Test against a broken endpoint (no auth configured) — confirm fallback `connectionFailed` response, no crash.
+6. Debug logs: verify no forwarded requests fire before init settles (stderr should be clean on a healthy run).
+7. Know the last good version — be ready for immediate dist-tag rollback if needed.
+
+E2E tests live in `/Users/eoingallagher/Development/wpcom-mcp-bruno-collection/tests/mcp-e2e` — run `npm run test:account` as a quick smoke test against the live WordPress.com MCP endpoint (bearer token already configured in `.env`).
+
+## Publishing a release
+
+Do NOT publish to npm manually. Creating a GitHub release triggers CI to publish automatically.
+
+1. Complete the pre-publish release gate above.
+2. Create a GitHub release tagged `vX.Y.Z` targeting `trunk`:
+   ```
+   gh release create vX.Y.Z --title "vX.Y.Z" --target trunk --notes "..."
+   ```
+3. Confirm CI published to npm: https://github.com/Automattic/mcp-wordpress-remote/actions
+
+### Downstream repos (update after npm publish confirms)
+
+Both repos pin this package and need PRs + releases after each publish:
+
+**github.com/Automattic/mcp-wpcom-remote**
+- Bump `@automattic/mcp-wordpress-remote` in `package.json` + bump the package's own `"version"` to match
+- Run `npm install` to update the lockfile
+- Open PR, merge, then create a matching GitHub release (`vX.Y.Z`) — this triggers its own npm publish
+
+**github.a8c.com/Automattic/mcp-context-a8c** (internal)
+- Bump `@automattic/mcp-wordpress-remote` in `package.json`
+- Run `npm install` to update the lockfile
+- Open PR, merge, then create a matching GitHub release
 
 ## Testing
 
