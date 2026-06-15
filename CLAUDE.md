@@ -18,8 +18,6 @@ MCP proxy server between Claude Code and a WordPress backend.
 6. Debug logs: verify no forwarded requests fire before init settles (stderr should be clean on a healthy run).
 7. Know the last good version — be ready for immediate dist-tag rollback if needed.
 
-E2E tests live in `/Users/eoingallagher/Development/wpcom-mcp-bruno-collection/tests/mcp-e2e` — run `npm run test:account` as a quick smoke test against the live WordPress.com MCP endpoint (bearer token already configured in `.env`).
-
 ## Publishing a release
 
 Do NOT publish to npm manually. Creating a GitHub release triggers CI to publish automatically.
