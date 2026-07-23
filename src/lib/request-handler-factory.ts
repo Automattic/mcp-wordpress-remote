@@ -4,13 +4,14 @@
  * Creates standardized request handlers to eliminate repetitive code
  */
 
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode, CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from './utils.js';
 import { wpRequest } from './wordpress-api.js';
 import { isAPIError } from './oauth-types.js';
 import { convertAPIErrorToMcpError, apiErrorToMcpError } from './error-utils.js';
 import { prepareRequest, waitForInit, SessionContext } from './session-utils.js';
 import { WPRequestParams } from './mcp-types.js';
+import { runToolCallHooks } from './tool-call-hooks.js';
 
 /**
  * Configuration for creating a request handler
@@ -55,6 +56,23 @@ export function createRequestHandler(config: HandlerConfig, context: SessionCont
 
     // Send request to WordPress
     const response = await wpRequest(requestData, context.transportType === 'jsonrpc');
+
+    // Let embedding packages piggyback on the live authenticated session after a
+    // successful tool call (e.g. usage telemetry). Best-effort; never alters the
+    // response the client receives.
+    //
+    // wpRequest resolving only proves the HTTP exchange succeeded — the SDK
+    // validates CallToolResultSchema after this handler returns, so a malformed
+    // HTTP-200 body would otherwise fire hooks for a call that then fails on
+    // the client. Only fire them for results the client will actually accept.
+    if (config.method === 'tools/call' && CallToolResultSchema.safeParse(response).success) {
+      // Hook requests must ride the session's detected transport: prepare them
+      // the same way the proxied call was prepared, so a hook works on both
+      // JSON-RPC and simple sessions instead of wpRequest's JSON-RPC default.
+      const hookWpRequest = (params: WPRequestParams) =>
+        wpRequest(prepareRequest(params, {}, context), context.transportType === 'jsonrpc');
+      runToolCallHooks({ name: (wpParams as any).name ?? '', wpRequest: hookWpRequest });
+    }
 
     return response;
   };
