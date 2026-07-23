@@ -15,6 +15,8 @@ export interface SessionContext {
   sessionId: string | null;
   requestIdCounter: number;
   transportType: TransportType;
+  /** @internal Output validators cached from the latest tools/list response. */
+  _toolOutputValidators: Map<string, (input: unknown) => { valid: boolean }>;
   /** @internal Managed by resolveInit/waitForInit — do not access directly. */
   _init: {
     ready: Promise<void>;
@@ -89,6 +91,7 @@ export function createSessionContext(): SessionContext {
     sessionId: null,
     requestIdCounter: 0,
     transportType: null,
+    _toolOutputValidators: new Map(),
     _init: {
       ready,
       resolve: resolve!,

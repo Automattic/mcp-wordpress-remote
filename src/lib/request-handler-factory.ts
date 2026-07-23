@@ -4,7 +4,13 @@
  * Creates standardized request handlers to eliminate repetitive code
  */
 
-import { McpError, ErrorCode, CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  McpError,
+  ErrorCode,
+  CallToolResultSchema,
+  ListToolsResultSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 import { logger } from './utils.js';
 import { wpRequest } from './wordpress-api.js';
 import { isAPIError } from './oauth-types.js';
@@ -12,6 +18,8 @@ import { convertAPIErrorToMcpError, apiErrorToMcpError } from './error-utils.js'
 import { prepareRequest, waitForInit, SessionContext } from './session-utils.js';
 import { WPRequestParams } from './mcp-types.js';
 import { runToolCallHooks } from './tool-call-hooks.js';
+
+const jsonSchemaValidator = new AjvJsonSchemaValidator();
 
 /**
  * Configuration for creating a request handler
@@ -57,15 +65,38 @@ export function createRequestHandler(config: HandlerConfig, context: SessionCont
     // Send request to WordPress
     const response = await wpRequest(requestData, context.transportType === 'jsonrpc');
 
+    // Mirror the SDK client's tools/list cache so the hook gate can apply the
+    // same advertised outputSchema validation that callTool() applies after
+    // this handler returns.
+    if (config.method === 'tools/list') {
+      const parsedTools = ListToolsResultSchema.safeParse(response);
+      if (parsedTools.success) {
+        context._toolOutputValidators.clear();
+        for (const tool of parsedTools.data.tools) {
+          if (tool.outputSchema) {
+            context._toolOutputValidators.set(
+              tool.name,
+              jsonSchemaValidator.getValidator(tool.outputSchema)
+            );
+          }
+        }
+      }
+    }
+
     // Let embedding packages piggyback on the live authenticated session after a
     // successful tool call (e.g. usage telemetry). Best-effort; never alters the
     // response the client receives.
     //
     // wpRequest resolving only proves the HTTP exchange succeeded — the SDK
-    // validates CallToolResultSchema after this handler returns, so a malformed
-    // HTTP-200 body would otherwise fire hooks for a call that then fails on
-    // the client. Only fire them for results the client will actually accept.
-    if (config.method === 'tools/call' && CallToolResultSchema.safeParse(response).success) {
+    // validates both CallToolResultSchema and the advertised per-tool
+    // outputSchema after this handler returns. Only fire hooks for results the
+    // client will actually accept.
+    const parsedToolResult = CallToolResultSchema.safeParse(response);
+    if (
+      config.method === 'tools/call' &&
+      parsedToolResult.success &&
+      isAcceptedToolResult((wpParams as any).name ?? '', parsedToolResult.data, context)
+    ) {
       // Hook requests must ride the session's detected transport: prepare them
       // the same way the proxied call was prepared, so a hook works on both
       // JSON-RPC and simple sessions instead of wpRequest's JSON-RPC default.
@@ -76,6 +107,32 @@ export function createRequestHandler(config: HandlerConfig, context: SessionCont
 
     return response;
   };
+}
+
+/** Match the SDK client's post-call validation of advertised structured output. */
+function isAcceptedToolResult(
+  toolName: string,
+  result: { structuredContent?: Record<string, unknown>; isError?: boolean },
+  context: SessionContext
+): boolean {
+  const validator = context._toolOutputValidators.get(toolName);
+  if (!validator) {
+    return true;
+  }
+
+  // The SDK permits an error result without structured content even when the
+  // tool advertises an output schema.
+  if (!result.structuredContent) {
+    return result.isError === true;
+  }
+
+  try {
+    return validator(result.structuredContent).valid;
+  } catch {
+    // A validator failure will also reject in the client. It must not reopen
+    // the proxy response path or dispatch a success hook.
+    return false;
+  }
 }
 
 /**

@@ -4,6 +4,7 @@
  * Covers the PR #92 review requirements:
  * - hooks fire only after a successful tools/call
  * - hooks do not fire for a malformed (schema-invalid) tool result
+ * - hooks do not fire when advertised structured output is missing or invalid
  * - hook work is deferred until after the tool-call handler resolves
  * - a synchronously throwing hook never affects the client response
  * - an async (rejecting) hook never becomes an unhandled rejection
@@ -164,6 +165,88 @@ describe('tool-call hooks', () => {
     await flush();
 
     expect(calls).toEqual([]);
+  });
+
+  it.each([
+    ['missing', { content: [{ type: 'text', text: 'ok' }] }],
+    [
+      'invalid',
+      {
+        content: [{ type: 'text', text: 'ok' }],
+        structuredContent: { count: 'not-a-number' },
+      },
+    ],
+  ])('does not run hooks when advertised structured output is %s', async (_case, toolResult) => {
+    nock('https://test-wp.example.com')
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        tools: [
+          {
+            name: 'my-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              type: 'object',
+              properties: { count: { type: 'number' } },
+              required: ['count'],
+            },
+          },
+        ],
+      })
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, toolResult);
+
+    const calls: any[] = [];
+    addHook(() => {
+      calls.push('called');
+    });
+
+    context.transportType = 'jsonrpc';
+    resolveInit(context, false);
+    const listTools = createRequestHandler(HANDLER_CONFIGS.listTools, context);
+    const callTool = createRequestHandler(HANDLER_CONFIGS.callTool, context);
+    await listTools({ id: 1, params: {} });
+    await callTool({ id: 2, params: { name: 'my-tool' } });
+    await flush();
+
+    expect(calls).toEqual([]);
+  });
+
+  it('runs hooks when structured output matches the advertised schema', async () => {
+    nock('https://test-wp.example.com')
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        tools: [
+          {
+            name: 'my-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              type: 'object',
+              properties: { count: { type: 'number' } },
+              required: ['count'],
+            },
+          },
+        ],
+      })
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        content: [{ type: 'text', text: 'ok' }],
+        structuredContent: { count: 1 },
+      });
+
+    const calls: any[] = [];
+    addHook(() => {
+      calls.push('called');
+    });
+
+    context.transportType = 'jsonrpc';
+    resolveInit(context, false);
+    const listTools = createRequestHandler(HANDLER_CONFIGS.listTools, context);
+    const callTool = createRequestHandler(HANDLER_CONFIGS.callTool, context);
+    await listTools({ id: 1, params: {} });
+    await callTool({ id: 2, params: { name: 'my-tool' } });
+    await flush();
+
+    expect(calls).toEqual(['called']);
   });
 
   it('defers hook work until after the tool-call handler resolves', async () => {
