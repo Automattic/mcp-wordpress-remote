@@ -19,8 +19,6 @@ import { prepareRequest, waitForInit, SessionContext } from './session-utils.js'
 import { WPRequestParams } from './mcp-types.js';
 import { runToolCallHooks } from './tool-call-hooks.js';
 
-const jsonSchemaValidator = new AjvJsonSchemaValidator();
-
 /**
  * Configuration for creating a request handler
  */
@@ -71,15 +69,28 @@ export function createRequestHandler(config: HandlerConfig, context: SessionCont
     if (config.method === 'tools/list') {
       const parsedTools = ListToolsResultSchema.safeParse(response);
       if (parsedTools.success) {
-        context._toolOutputValidators.clear();
+        const nextJsonSchemaValidator = new AjvJsonSchemaValidator();
+        const nextToolOutputValidators = new Map<string, (input: unknown) => { valid: boolean }>();
         for (const tool of parsedTools.data.tools) {
           if (tool.outputSchema) {
-            context._toolOutputValidators.set(
+            // The SDK validator wrapper assumes synchronous AJV validators. An
+            // async schema would return a Promise that is mistaken for a valid
+            // result, then reject outside the tool-call validation try/catch.
+            if (tool.outputSchema.$async === true) {
+              throw new Error(`Async output schemas are not supported for tool ${tool.name}`);
+            }
+
+            nextToolOutputValidators.set(
               tool.name,
-              jsonSchemaValidator.getValidator(tool.outputSchema)
+              nextJsonSchemaValidator.getValidator(tool.outputSchema)
             );
           }
         }
+
+        // Compile the complete list before replacing the live cache. If any
+        // schema fails, the client rejects listTools() and both sides retain
+        // the validators from the last successful response.
+        context._toolOutputValidators = nextToolOutputValidators;
       }
     }
 

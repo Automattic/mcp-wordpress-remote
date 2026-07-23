@@ -249,6 +249,163 @@ describe('tool-call hooks', () => {
     expect(calls).toEqual(['called']);
   });
 
+  it('rejects async output schemas before caching their validators', async () => {
+    nock('https://test-wp.example.com')
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        tools: [
+          {
+            name: 'async-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              $async: true,
+              type: 'object',
+              properties: { count: { type: 'number' } },
+            },
+          },
+        ],
+      });
+
+    context.transportType = 'jsonrpc';
+    resolveInit(context, false);
+    const listTools = createRequestHandler(HANDLER_CONFIGS.listTools, context);
+
+    await expect(listTools({ id: 1, params: {} })).rejects.toThrow(
+      'Async output schemas are not supported for tool async-tool'
+    );
+    expect(context._toolOutputValidators.size).toBe(0);
+  });
+
+  it('keeps the previous validator cache when a tools/list refresh fails', async () => {
+    nock('https://test-wp.example.com')
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        tools: [
+          {
+            name: 'my-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              type: 'object',
+              properties: { count: { type: 'number' } },
+              required: ['count'],
+            },
+          },
+        ],
+      })
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        tools: [
+          {
+            name: 'my-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              type: 'object',
+              properties: { count: { type: 'string' } },
+              required: ['count'],
+            },
+          },
+          {
+            name: 'invalid-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              type: 'object',
+              properties: { value: { type: 'not-a-json-schema-type' } },
+            },
+          },
+        ],
+      })
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        content: [{ type: 'text', text: 'ok' }],
+        structuredContent: { count: 'valid-only-for-the-failed-refresh' },
+      });
+
+    const calls: any[] = [];
+    addHook(() => {
+      calls.push('called');
+    });
+
+    context.transportType = 'jsonrpc';
+    resolveInit(context, false);
+    const listTools = createRequestHandler(HANDLER_CONFIGS.listTools, context);
+    const callTool = createRequestHandler(HANDLER_CONFIGS.callTool, context);
+
+    await listTools({ id: 1, params: {} });
+    const previousValidators = context._toolOutputValidators;
+    await expect(listTools({ id: 2, params: {} })).rejects.toThrow();
+    expect(context._toolOutputValidators).toBe(previousValidators);
+
+    await callTool({ id: 3, params: { name: 'my-tool' } });
+    await flush();
+
+    expect(calls).toEqual([]);
+  });
+
+  it('does not reuse a schema compiled during a failed tools/list refresh', async () => {
+    const schemaId = 'https://example.com/schemas/my-tool-output';
+    nock('https://test-wp.example.com')
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        tools: [
+          {
+            name: 'my-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              $id: schemaId,
+              type: 'object',
+              properties: { count: { type: 'string' } },
+              required: ['count'],
+            },
+          },
+          {
+            name: 'invalid-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              type: 'object',
+              properties: { value: { type: 'not-a-json-schema-type' } },
+            },
+          },
+        ],
+      })
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        tools: [
+          {
+            name: 'my-tool',
+            inputSchema: { type: 'object' },
+            outputSchema: {
+              $id: schemaId,
+              type: 'object',
+              properties: { count: { type: 'number' } },
+              required: ['count'],
+            },
+          },
+        ],
+      })
+      .post('/?rest_route=/wp/v2/wpmcp')
+      .reply(200, {
+        content: [{ type: 'text', text: 'ok' }],
+        structuredContent: { count: 1 },
+      });
+
+    const calls: any[] = [];
+    addHook(() => {
+      calls.push('called');
+    });
+
+    context.transportType = 'jsonrpc';
+    resolveInit(context, false);
+    const listTools = createRequestHandler(HANDLER_CONFIGS.listTools, context);
+    const callTool = createRequestHandler(HANDLER_CONFIGS.callTool, context);
+
+    await expect(listTools({ id: 1, params: {} })).rejects.toThrow();
+    await listTools({ id: 2, params: {} });
+    await callTool({ id: 3, params: { name: 'my-tool' } });
+    await flush();
+
+    expect(calls).toEqual(['called']);
+  });
+
   it('defers hook work until after the tool-call handler resolves', async () => {
     mockToolCall();
     const calls: string[] = [];
