@@ -1,7 +1,7 @@
 /**
  * Tool-call hooks for MCP WordPress Remote.
  *
- * Lets an embedding package observe successful `tools/call` requests and
+ * Lets an embedding package observe completed `tools/call` requests and
  * piggyback on the proxy's live, authenticated session — for example to send
  * usage telemetry — without forking the proxy.
  *
@@ -27,7 +27,7 @@ export interface ToolCallContext {
   wpRequest: (params: WPRequestParams) => Promise<WordPressResponse>;
 }
 
-/** A hook fired after each successful `tools/call`. May be async. */
+/** A hook fired after each completed `tools/call`. May be async. */
 export type ToolCallHook = (context: ToolCallContext) => void | Promise<void>;
 
 const REGISTRY_KEY = Symbol.for('@automattic/mcp-wordpress-remote:tool-call-hooks');
@@ -43,7 +43,7 @@ function getRegistry(): Set<ToolCallHook> {
 }
 
 /**
- * Register a hook fired after each successful `tools/call`. Returns a function
+ * Register a hook fired after each completed `tools/call`. Returns a function
  * that unregisters it.
  */
 export function registerToolCallHook(hook: ToolCallHook): () => void {
@@ -55,38 +55,27 @@ export function registerToolCallHook(hook: ToolCallHook): () => void {
 }
 
 /**
- * Invoke all registered hooks. Best-effort: a hook that throws synchronously
- * or returns a rejecting promise is isolated so it can never break the tool
- * call it rode in on. Failures are logged so a broken hook stays diagnosable.
+ * Invoke all registered hooks after the request path has completed. A hook can
+ * never alter the tool call it rode in on: it runs on a later tick and its
+ * failures are isolated and logged rather than propagated.
  */
 export function runToolCallHooks(context: ToolCallContext): void {
-  // Iterate a snapshot: a hook that unregisters and re-registers itself would
-  // be appended to the live Set and revisited in the same pass, forever.
+  // Snapshot the registry: a hook that unregisters and re-registers itself
+  // would otherwise be revisited forever within this same pass.
   const hooks = [...getRegistry()];
+  if (hooks.length === 0) return;
 
-  // Invoke hooks on the next event-loop turn. Calling `hook(context)` inside
-  // Promise.resolve still runs all synchronous (and pre-first-await) work on
-  // the tool-call response path, so a slow hook could delay the client.
   setImmediate(() => {
     for (const hook of hooks) {
-      try {
-        Promise.resolve(hook(context)).catch(error => {
-          logHookFailure(error);
-        });
-      } catch (error) {
-        logHookFailure(error);
-      }
+      void Promise.resolve()
+        .then(() => hook(context))
+        .catch(error => {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error(`Tool-call hook failed: ${message}`, 'HOOKS');
+        })
+        // Logging can itself fail (e.g. an unwritable LOG_FILE); never let that
+        // reopen the failure path as an unhandled rejection.
+        .catch(() => {});
     }
   });
-}
-
-/** A hook must never break the request path — log the failure and move on. */
-function logHookFailure(error: unknown): void {
-  try {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error(`Tool-call hook failed: ${message}`, 'HOOKS');
-  } catch {
-    // Logging can itself fail (for example, an unwritable LOG_FILE). Hook
-    // diagnostics remain best-effort and must never reopen the failure path.
-  }
 }
