@@ -39,7 +39,10 @@ import {
   buildAuthorizationUrl,
   generateSecureState,
 } from './mcp-oauth-utils.js';
-import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
+import {
+  setupWPOAuthCallbackServer,
+  formatSiteLabelForOAuthLanding,
+} from './oauth-callback-server.js';
 import { logger } from './utils.js';
 import { CONFIG, getDefaultOAuthScopes, getOAuthCallbackPort, getCustomHeaders } from './config.js';
 import { proxyFetch } from './fetch-utils.js';
@@ -388,15 +391,28 @@ export class MCPOAuthProvider {
       logger.oauth('Built OAuth 2.1 authorization URL');
       logger.debug('Authorization URL', 'OAUTH', { url: authUrl });
 
-      // Step 6: Open browser for user authorization
+      callbackServer.setLandingContext(
+        authUrl,
+        formatSiteLabelForOAuthLanding(this.config.serverUrl)
+      );
+      const urlToOpen = CONFIG.OAUTH_LANDING_PAGE ? callbackServer.getLandingUrl() : authUrl;
+
+      // Step 6: Open browser (localhost landing page first, or authorize URL if disabled)
       try {
-        await open(authUrl);
+        await open(urlToOpen);
         logger.oauth('Browser opened successfully');
       } catch (browserError) {
         logger.error('Failed to open browser automatically', 'OAUTH', browserError);
         logger.info('\n=== MANUAL ACTION REQUIRED ===');
-        logger.info('Please manually open the following URL in your browser:');
-        logger.info(`${authUrl}`);
+        if (CONFIG.OAUTH_LANDING_PAGE) {
+          logger.info('Open this page in your browser (review, then continue to OAuth):');
+          logger.info(`${callbackServer.getLandingUrl()}`);
+          logger.info('Or open the authorization URL directly:');
+          logger.info(`${authUrl}`);
+        } else {
+          logger.info('Please manually open the following URL in your browser:');
+          logger.info(`${authUrl}`);
+        }
         logger.info('===============================\n');
       }
 

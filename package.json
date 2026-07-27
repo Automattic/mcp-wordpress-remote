@@ -43,6 +43,7 @@
     "check": "prettier --check . && tsc",
     "start": "NODE_ENV=development tsup --watch",
     "dev": "NODE_ENV=development node dist/proxy.js",
+    "dev:oauth-html": "npm run build && node dist/dev/oauth-html-preview.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:unit": "jest --testPathPattern=unit",
@@ -91,7 +92,8 @@
   "tsup": {
     "entry": [
       "src/proxy.ts",
-      "src/lib.ts"
+      "src/lib.ts",
+      "src/dev/oauth-html-preview.ts"
     ],
     "format": [
       "esm"

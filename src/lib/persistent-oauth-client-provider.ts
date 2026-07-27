@@ -12,7 +12,10 @@ import {
   isTokenValid,
 } from './persistent-auth-config.js';
 import { WPTokens, WPClientInfo, OAuthError, WPOAuthOptions } from './oauth-types.js';
-import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
+import {
+  setupWPOAuthCallbackServer,
+  formatSiteLabelForOAuthLanding,
+} from './oauth-callback-server.js';
 import { logger } from './utils.js';
 import { CONFIG, getDefaultOAuthScopes, getOAuthCallbackPort } from './config.js';
 
@@ -230,16 +233,29 @@ export class PersistentWPOAuthClientProvider {
       logger.oauth(`Built authorization URL: ${authUrl}`);
       logger.debug(`Callback URL: ${callbackServer.getCallbackUrl()}`, 'OAUTH');
 
-      // Open browser to authorization URL
+      callbackServer.setLandingContext(
+        authUrl,
+        formatSiteLabelForOAuthLanding(this.options.serverUrl)
+      );
+      const urlToOpen = CONFIG.OAUTH_LANDING_PAGE ? callbackServer.getLandingUrl() : authUrl;
+
+      // Open browser (localhost landing first, or authorize URL if OAUTH_LANDING_PAGE=false)
       logger.oauth('Attempting to open browser...');
       try {
-        await open(authUrl);
+        await open(urlToOpen);
         logger.oauth('Browser opened successfully');
       } catch (browserError) {
         logger.error('Failed to open browser automatically', 'OAUTH', browserError);
         logger.info('\n=== MANUAL ACTION REQUIRED ===');
-        logger.info('Please manually open the following URL in your browser:');
-        logger.info(`${authUrl}`);
+        if (CONFIG.OAUTH_LANDING_PAGE) {
+          logger.info('Open this page in your browser (review, then continue to OAuth):');
+          logger.info(`${callbackServer.getLandingUrl()}`);
+          logger.info('Or open the authorization URL directly:');
+          logger.info(`${authUrl}`);
+        } else {
+          logger.info('Please manually open the following URL in your browser:');
+          logger.info(`${authUrl}`);
+        }
         logger.info('===============================\n');
         // Don't throw here, continue waiting for manual authorization
       }

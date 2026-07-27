@@ -8,199 +8,31 @@ import { EventEmitter } from 'node:events';
 import { OAuthCallbackServerOptions, WPTokens, OAuthError } from './oauth-types.js';
 import { writeTokens } from './persistent-auth-config.js';
 import { logger } from './utils.js';
+import {
+  buildOAuthLandingHtml,
+  buildLandingUnavailableHtml,
+  AUTHORIZATION_CODE_HTML,
+} from './oauth-html-templates.js';
 
 /**
- * HTML page for handling OAuth 2.1 authorization code callback
- * Updated for MCP Authorization specification 2025-06-18 compliance
+ * Human-readable site label for the OAuth landing page (hostname preferred).
  */
-const AUTHORIZATION_CODE_HTML = `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>MCP Client Authorization</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            margin: 0;
-            padding: 40px;
-            background: #f5f5f5;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .container {
-            background: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            text-align: center;
-            max-width: 500px;
-            width: 100%;
-        }
-        h1 {
-            color: #333;
-            margin-bottom: 20px;
-        }
-        .success { 
-            color: #27ae60; 
-            font-size: 18px;
-            margin: 20px 0;
-        }
-        .error { 
-            color: #e74c3c; 
-            font-size: 18px;
-            margin: 20px 0;
-        }
-        .loading { 
-            color: #3498db; 
-            font-size: 18px;
-            margin: 20px 0;
-        }
-        .details {
-            color: #666;
-            margin-top: 10px;
-            font-size: 14px;
-        }
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #3498db;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>MCP Client Authorization</h1>
-        <div class="spinner" id="spinner"></div>
-        <div id="status" class="loading">Processing authorization code...</div>
-        <div id="details" class="details"></div>
-    </div>
-
-    <script>
-        function displayStatus(message, type = 'loading') {
-            const statusEl = document.getElementById('status');
-            const spinnerEl = document.getElementById('spinner');
-            
-            statusEl.textContent = message;
-            statusEl.className = type;
-            
-            if (type !== 'loading') {
-                spinnerEl.style.display = 'none';
-            }
-        }
-
-        function displayDetails(message) {
-            document.getElementById('details').textContent = message;
-        }
-
-        // Handle both OAuth 2.1 authorization code flow and implicit flow
-        const urlParams = new URLSearchParams(window.location.search);
-        const hashParams = new URLSearchParams(window.location.hash.substring(1));
-
-        // Check for authorization code first (OAuth 2.1 flow)
-        if (urlParams.has('code')) {
-            const authData = {
-                code: urlParams.get('code'),
-                state: urlParams.get('state'),
-                // Additional parameters for validation
-                iss: urlParams.get('iss'),
-            };
-
-            // Send authorization code to server for token exchange
-            fetch('/oauth/callback', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(authData)
-            })
-            .then(response => {
-                if (response.ok) {
-                    displayStatus('✅ Authorization successful!', 'success');
-                    displayDetails('You can safely close this window.');
-                } else {
-                    return response.json().then(err => {
-                        throw new Error(err.error || 'Failed to exchange authorization code');
-                    });
-                }
-            })
-            .catch(error => {
-                displayStatus('❌ Error completing authorization', 'error');
-                displayDetails(error.message + '. Please try again.');
-            });
-        } 
-        // Check for access token in URL fragment (implicit flow)
-        else if (hashParams.has('access_token')) {
-            const tokens = {
-                access_token: hashParams.get('access_token'),
-                token_type: hashParams.get('token_type') || 'Bearer',
-                expires_in: hashParams.get('expires_in') ? parseInt(hashParams.get('expires_in')) : 3600,
-                scope: hashParams.get('scope'),
-                state: hashParams.get('state'),
-                obtained_at: Date.now()
-            };
-
-            // Send tokens to server for storage
-            fetch('/oauth/tokens', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(tokens)
-            })
-            .then(response => {
-                if (response.ok) {
-                    displayStatus('✅ Authorization successful!', 'success');
-                    displayDetails('You can safely close this window.');
-                } else {
-                    return response.json().then(err => {
-                        throw new Error(err.error || 'Failed to store access token');
-                    });
-                }
-            })
-            .catch(error => {
-                displayStatus('❌ Error completing authorization', 'error');
-                displayDetails(error.message + '. Please try again.');
-            });
-        } 
-        // Check for errors in query parameters
-        else if (urlParams.has('error')) {
-            const error = urlParams.get('error');
-            const errorDescription = urlParams.get('error_description');
-            displayStatus('❌ Authorization failed', 'error');
-            displayDetails(\`Error: \${error}\${errorDescription ? ' - ' + errorDescription : ''}\`);
-        } 
-        // Check for errors in URL fragment (implicit flow errors)
-        else if (hashParams.has('error')) {
-            const error = hashParams.get('error');
-            const errorDescription = hashParams.get('error_description');
-            displayStatus('❌ Authorization failed', 'error');
-            displayDetails(\`Error: \${error}\${errorDescription ? ' - ' + errorDescription : ''}\`);
-        } 
-        // No authorization code or access token found
-        else {
-            displayStatus('❌ No authorization code or access token received', 'error');
-            displayDetails('Please try the authorization process again.');
-        }
-    </script>
-</body>
-</html>
-`;
+export function formatSiteLabelForOAuthLanding(serverUrl: string): string {
+  try {
+    const u = new URL(serverUrl);
+    return u.host;
+  } catch {
+    return serverUrl;
+  }
+}
 
 export class OAuthCallbackServer {
   private app: express.Application;
   private server: Server | null = null;
   private events: EventEmitter;
   private options: OAuthCallbackServerOptions;
+  private landingAuthUrl: string | null = null;
+  private landingSiteLabel: string = '';
 
   constructor(options: OAuthCallbackServerOptions, events: EventEmitter) {
     this.options = options;
@@ -209,9 +41,35 @@ export class OAuthCallbackServer {
     this.setupRoutes();
   }
 
+  /**
+   * Set context for GET /oauth/start (localhost landing page before the OAuth authorize URL).
+   * Call after building the authorization URL and before opening the browser.
+   */
+  setLandingContext(authUrl: string, siteLabel: string): void {
+    this.landingAuthUrl = authUrl;
+    this.landingSiteLabel = siteLabel;
+  }
+
+  /**
+   * URL of the localhost landing page (opens in the browser instead of the authorize URL when enabled).
+   */
+  getLandingUrl(): string {
+    return `http://${this.options.host}:${this.options.port}/oauth/start`;
+  }
+
   private setupRoutes(): void {
     // Parse JSON bodies
     this.app.use(express.json());
+
+    // Localhost landing page: user confirms before visiting the OAuth authorize URL
+    this.app.get('/oauth/start', (req, res) => {
+      logger.oauth('OAuth landing page requested');
+      if (!this.landingAuthUrl) {
+        res.status(400).type('html').send(buildLandingUnavailableHtml());
+        return;
+      }
+      res.type('html').send(buildOAuthLandingHtml(this.landingAuthUrl, this.landingSiteLabel));
+    });
 
     // Serve the authorization code callback page
     this.app.get('/oauth/callback', (req, res) => {
@@ -327,6 +185,8 @@ export class OAuthCallbackServer {
   }
 
   async stop(): Promise<void> {
+    this.landingAuthUrl = null;
+    this.landingSiteLabel = '';
     if (!this.server) return;
     const server = this.server;
     this.server = null;

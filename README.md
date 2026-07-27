@@ -156,6 +156,8 @@ OAuth 2.1 provides the most secure and user-friendly experience with full MCP Au
 - No need to manage passwords
 - Automatic expiration handling
 
+By default, your browser opens a **localhost landing page** first (`/oauth/start` on the callback server). You review the context, then click through to the real OAuth authorization URL. This avoids an immediate redirect to the IdP and reduces surprise / phishing risk. To restore the previous behavior (open the authorization URL directly), set `OAUTH_LANDING_PAGE=false`.
+
 ### 2. JWT Token Authentication
 
 For server-to-server authentication or when OAuth is not available.

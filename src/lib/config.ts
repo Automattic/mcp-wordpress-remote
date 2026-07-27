@@ -36,6 +36,8 @@ export const CONFIG = {
     ? parseInt(process.env.OAUTH_CALLBACK_PORT)
     : undefined,
   OAUTH_HOST: process.env.OAUTH_HOST || '127.0.0.1',
+  /** When true (default), opens browser to a localhost landing page before the OAuth URL */
+  OAUTH_LANDING_PAGE: process.env.OAUTH_LANDING_PAGE !== 'false',
   WP_OAUTH_CLIENT_ID: process.env.WP_OAUTH_CLIENT_ID || '', // No default - site-specific
 
   // OAuth flow type - authorization_code (recommended) or implicit (legacy)
@@ -109,6 +111,9 @@ export const getConfig = () => ({
 
   /** Hostname for OAuth callback */
   oauthHost: CONFIG.OAUTH_HOST,
+
+  /** Show localhost landing page before redirecting to OAuth (set OAUTH_LANDING_PAGE=false to skip) */
+  oauthLandingPage: CONFIG.OAUTH_LANDING_PAGE,
 
   /** WordPress OAuth client ID */
   wpOAuthClientId: CONFIG.WP_OAUTH_CLIENT_ID,
