@@ -99,8 +99,8 @@ export function shouldBypassProxy(targetUrl: string): boolean {
 
   const rules = noProxy
     .split(',')
-    .map((r) => r.trim().toLowerCase())
-    .filter((r) => r.length > 0);
+    .map(r => r.trim().toLowerCase())
+    .filter(r => r.length > 0);
 
   for (const rule of rules) {
     if (rule === '*') return true;
@@ -164,7 +164,7 @@ export async function initializeProxy(
     return initializationPromise;
   }
 
-  initializationPromise = doInitializeProxy(detectMacOs).catch((error) => {
+  initializationPromise = doInitializeProxy(detectMacOs).catch(error => {
     initializationPromise = null;
     throw error;
   });
@@ -271,7 +271,10 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
         const socksMatch = directive.match(/SOCKS5?\s+(\S+):(\d+)/i);
         if (socksMatch) {
           const proxyUrl = `socks5h://${socksMatch[1]}:${socksMatch[2]}`;
-          logger.debug(`PAC returned SOCKS proxy for ${url}: ${sanitizeProxyUrl(proxyUrl)}`, 'PROXY');
+          logger.debug(
+            `PAC returned SOCKS proxy for ${url}: ${sanitizeProxyUrl(proxyUrl)}`,
+            'PROXY'
+          );
           return new SocksProxyAgent(proxyUrl);
         }
 
@@ -279,7 +282,10 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
         const proxyMatch = directive.match(/PROXY\s+(\S+):(\d+)/i);
         if (proxyMatch) {
           const proxyUrl = `http://${proxyMatch[1]}:${proxyMatch[2]}`;
-          logger.debug(`PAC returned HTTP proxy for ${url}: ${sanitizeProxyUrl(proxyUrl)}`, 'PROXY');
+          logger.debug(
+            `PAC returned HTTP proxy for ${url}: ${sanitizeProxyUrl(proxyUrl)}`,
+            'PROXY'
+          );
           return new HttpsProxyAgent(proxyUrl);
         }
       }
@@ -296,9 +302,7 @@ export async function getAgentForUrl(url: string): Promise<ProxyAgent | undefine
     const { url: proxyUrl, type } = proxyConfig.envProxy;
     try {
       logger.debug(`Using env proxy ${sanitizeProxyUrl(proxyUrl)} for ${url}`, 'PROXY');
-      return type === 'socks'
-        ? new SocksProxyAgent(proxyUrl)
-        : new HttpsProxyAgent(proxyUrl);
+      return type === 'socks' ? new SocksProxyAgent(proxyUrl) : new HttpsProxyAgent(proxyUrl);
     } catch (error) {
       logger.error(`Invalid proxy URL "${proxyUrl}": ${error}`, 'PROXY');
       return undefined;

@@ -1,6 +1,6 @@
 /**
  * MCP Request Types for WordPress Remote Proxy
- * 
+ *
  * Type definitions for all MCP JSON-RPC request schemas
  */
 

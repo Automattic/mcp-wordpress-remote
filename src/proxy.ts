@@ -146,7 +146,9 @@ async function WordPressProxy() {
           version: MCP_WORDPRESS_REMOTE_VERSION,
         },
         capabilities: {
-          experimental: { connectionFailed: connectionError.code ? { code: connectionError.code } : {} },
+          experimental: {
+            connectionFailed: connectionError.code ? { code: connectionError.code } : {},
+          },
         },
         instructions: `MCP WordPress Remote Proxy Server (Connection Failed${
           connectionError.code ? `: ${connectionError.code}` : ''

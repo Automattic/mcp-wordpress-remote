@@ -83,7 +83,9 @@ export function prepareRequest(
  */
 export function createSessionContext(): SessionContext {
   let resolve: () => void;
-  const ready = new Promise<void>(r => { resolve = r; });
+  const ready = new Promise<void>(r => {
+    resolve = r;
+  });
 
   return {
     sessionId: null,
@@ -129,7 +131,10 @@ export type InitResult =
   | { ready: true }
   | { ready: false; reason: 'failed' | 'timeout'; error?: ConnectionErrorInfo };
 
-export async function waitForInit(context: SessionContext, timeoutMs = INIT_TIMEOUT_MS): Promise<InitResult> {
+export async function waitForInit(
+  context: SessionContext,
+  timeoutMs = INIT_TIMEOUT_MS
+): Promise<InitResult> {
   // Fast path: init already settled, no async work needed
   if (context._init.settled) {
     return context._init.failed

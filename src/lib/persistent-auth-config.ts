@@ -295,11 +295,11 @@ export function isTokenValid(tokens: WPTokens): TokenValidationResult {
 
   // Optimized expiration check - avoid Math.floor until needed
   const now = Date.now();
-  const expiryTime = tokens.obtained_at + (tokens.expires_in * 1000);
-  
+  const expiryTime = tokens.obtained_at + tokens.expires_in * 1000;
+
   // Quick check with 60-second buffer for token refresh
-  const isExpiringSoon = now >= (expiryTime - 60000);
-  
+  const isExpiringSoon = now >= expiryTime - 60000;
+
   if (isExpiringSoon) {
     const expiresIn = Math.max(0, Math.floor((expiryTime - now) / 1000));
     return {
@@ -311,9 +311,9 @@ export function isTokenValid(tokens: WPTokens): TokenValidationResult {
 
   // Token is valid with plenty of time left
   const expiresIn = Math.floor((expiryTime - now) / 1000);
-  return { 
+  return {
     isValid: true,
-    expiresIn: Math.max(0, expiresIn)
+    expiresIn: Math.max(0, expiresIn),
   };
 }
 

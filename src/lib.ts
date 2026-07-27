@@ -9,7 +9,14 @@
 export { logger, log, LogLevel } from './lib/utils.js';
 
 // Export configuration utilities
-export { CONFIG, getConfig, validateConfig, getDefaultOAuthScopes, parseCustomHeaders, getCustomHeaders } from './lib/config.js';
+export {
+  CONFIG,
+  getConfig,
+  validateConfig,
+  getDefaultOAuthScopes,
+  parseCustomHeaders,
+  getCustomHeaders,
+} from './lib/config.js';
 
 // Export WordPress API utilities
 export { wpRequest } from './lib/wordpress-api.js';
@@ -34,10 +41,21 @@ export {
 export { MCP_WORDPRESS_REMOTE_VERSION } from './lib/utils.js';
 
 // Export fetch utilities (including proxy support)
-export { setupFetchPolyfill, proxyFetch, getProxyInfo, isFetchAvailable, getFetchInfo } from './lib/fetch-utils.js';
+export {
+  setupFetchPolyfill,
+  proxyFetch,
+  getProxyInfo,
+  isFetchAvailable,
+  getFetchInfo,
+} from './lib/fetch-utils.js';
 
 // Export proxy utilities
-export { initializeProxy, isProxyConfigured, getProxyType, getAgentForUrl } from './lib/proxy-utils.js';
+export {
+  initializeProxy,
+  isProxyConfigured,
+  getProxyType,
+  getAgentForUrl,
+} from './lib/proxy-utils.js';
 
 // Export tool-call hooks (embedding packages can piggyback on the live session)
 export { registerToolCallHook } from './lib/tool-call-hooks.js';

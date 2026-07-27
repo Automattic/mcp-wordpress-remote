@@ -190,7 +190,7 @@ export class MCPOAuthProvider {
             // Fetch protected resource metadata from the indicated URL
             const metadataResponse = await proxyFetch(authInfo.resource_metadata_url, {
               headers: {
-                'Accept': 'application/json',
+                Accept: 'application/json',
                 ...customHeaders,
               },
             });
@@ -354,9 +354,8 @@ export class MCPOAuthProvider {
       await writeTextFile(this.serverUrlHash, 'oauth_state.txt', this.currentState);
 
       // Step 4: Set up callback server with smart port selection
-      const callbackPort = this.config.callbackPort === 0
-        ? await getOAuthCallbackPort()
-        : this.config.callbackPort;
+      const callbackPort =
+        this.config.callbackPort === 0 ? await getOAuthCallbackPort() : this.config.callbackPort;
 
       const callbackServer = setupWPOAuthCallbackServer(
         {
