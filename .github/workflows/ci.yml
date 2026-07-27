@@ -1,46 +1,64 @@
-name: CI
+name: Test
+
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
 
 on:
-  pull_request:
+  workflow_dispatch:
   push:
-    branches: [trunk]
+    branches:
+      - trunk
+  pull_request:
+    types:
+      - opened
+      - synchronize
 
-# A new push to a PR makes the in-flight run obsolete; don't burn minutes on it.
+# Cancels all previous workflow runs for pull requests that have not completed.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: verify
-    runs-on: ubuntu-latest
+  # Runs the formatting and type checks.
+  #
+  # Performs the following steps:
+  # - Checks out the repository.
+  # - Sets up Node.js.
+  # - Installs npm dependencies.
+  # - Runs Prettier over src and typechecks the whole project.
+  # - Verifies the version constant agrees with package.json.
+  lint:
+    name: Lint and typecheck
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
+    timeout-minutes: 10
+
     steps:
-      - name: Check out
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          show-progress: ${{ runner.debug == '1' && 'true' || 'false' }}
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
+          # Matches the version release.yml publishes with. There is no .nvmrc.
           node-version: '22'
           cache: npm
 
-      - name: Install dependencies
+      - name: Install npm dependencies
         run: npm ci
 
-      # Formatting plus a whole-project typecheck. tsc must keep --noEmit here:
-      # tsconfig sets outDir to ./dist, so a bare tsc would overwrite the tsup
-      # bundle with per-file output.
+      # `npm run check` is `prettier --check src && tsc --noEmit`. The --noEmit
+      # matters: tsconfig sets outDir to ./dist, so a bare tsc overwrites the
+      # tsup bundle with per-file output.
       - name: Check formatting and types
         run: npm run check
-
-      - name: Build
-        run: npm run build
-
-      # Both suites. tests/unit/ alone silently skips the integration tests.
-      - name: Run tests
-        run: npx jest tests/unit/ tests/integration/ --no-coverage
 
       # package.json and the constant are independent sources of truth, and
       # drifting apart once shipped a token directory named
@@ -58,3 +76,44 @@ jobs:
             exit 1
           fi
           echo "Version constant matches package.json: ${PKG_VERSION}"
+
+  # Runs the unit and integration suites against a real build.
+  #
+  # Performs the following steps:
+  # - Checks out the repository.
+  # - Sets up Node.js.
+  # - Installs npm dependencies.
+  # - Builds the tsup bundle.
+  # - Runs the unit and integration suites.
+  test:
+    name: Unit and integration tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          show-progress: ${{ runner.debug == '1' && 'true' || 'false' }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Must run before the suites. tests/integration/bundle-version-interpolation
+      # asserts against dist/proxy.js and silently skips itself when the bundle is
+      # absent, so without this the suite would report green while dropping it.
+      - name: Build
+        run: npm run build
+
+      # Both suites. tests/unit/ alone silently skips the integration tests.
+      - name: Run tests
+        run: npx jest tests/unit/ tests/integration/ --no-coverage
