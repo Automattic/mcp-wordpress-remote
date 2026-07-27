@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [trunk]
+
+# A new push to a PR makes the in-flight run obsolete; don't burn minutes on it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Formatting plus a whole-project typecheck. tsc must keep --noEmit here:
+      # tsconfig sets outDir to ./dist, so a bare tsc would overwrite the tsup
+      # bundle with per-file output.
+      - name: Check formatting and types
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      # Both suites. tests/unit/ alone silently skips the integration tests.
+      - name: Run tests
+        run: npx jest tests/unit/ tests/integration/ --no-coverage
+
+      # package.json and the constant are independent sources of truth, and
+      # drifting apart once shipped a token directory named
+      # wordpress-remote-undefined.
+      - name: Verify version constant matches package.json
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          SRC_VERSION="$(node -e "
+            const s = require('fs').readFileSync('src/lib/config.ts', 'utf8');
+            const m = s.match(/MCP_WORDPRESS_REMOTE_VERSION = '([^']+)'/);
+            process.stdout.write(m ? m[1] : '');
+          ")"
+          if [ "${PKG_VERSION}" != "${SRC_VERSION}" ]; then
+            echo "Version mismatch: package.json is '${PKG_VERSION}' but MCP_WORDPRESS_REMOTE_VERSION in src/lib/config.ts is '${SRC_VERSION}'."
+            exit 1
+          fi
+          echo "Version constant matches package.json: ${PKG_VERSION}"
