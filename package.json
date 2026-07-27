@@ -40,7 +40,7 @@
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
-    "check": "prettier --check src && tsc",
+    "check": "prettier --check src && tsc --noEmit",
     "start": "NODE_ENV=development tsup --watch",
     "dev": "NODE_ENV=development node dist/proxy.js",
     "test": "jest",
