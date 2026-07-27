@@ -137,7 +137,13 @@ export class APIError extends Error {
   /** Underlying network/TLS error code (e.g. "UNABLE_TO_VERIFY_LEAF_SIGNATURE"), when the failure was below the HTTP layer. */
   public readonly code?: string;
 
-  constructor(message: string, statusCode: number, endpoint: string, response?: any, code?: string) {
+  constructor(
+    message: string,
+    statusCode: number,
+    endpoint: string,
+    response?: any,
+    code?: string
+  ) {
     super(message);
     this.name = 'APIError';
     this.statusCode = statusCode;

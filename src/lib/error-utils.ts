@@ -1,6 +1,6 @@
 /**
  * Error handling utilities for MCP WordPress Remote
- * 
+ *
  * Provides functions for converting API errors to MCP-compliant error formats
  */
 
@@ -159,13 +159,13 @@ export function mapHttpStatusToMcpCode(statusCode: number): number {
 
   // MCP-specific error codes (in -32000 to -32099 range, using only well-established codes)
   const MCP_ERROR_CODES = {
-    SERVER_ERROR: -32000,       // Generic server error
-    TIMEOUT_ERROR: -32001,      // Request timeout
+    SERVER_ERROR: -32000, // Generic server error
+    TIMEOUT_ERROR: -32001, // Request timeout
     RESOURCE_NOT_FOUND: -32002, // Resource not found
-    TOOL_NOT_FOUND: -32003,     // Tool not found  
-    PROMPT_NOT_FOUND: -32004,   // Prompt not found
-    PERMISSION_DENIED: -32008,  // Access denied/forbidden
-    UNAUTHORIZED: -32010,       // Authentication required
+    TOOL_NOT_FOUND: -32003, // Tool not found
+    PROMPT_NOT_FOUND: -32004, // Prompt not found
+    PERMISSION_DENIED: -32008, // Access denied/forbidden
+    UNAUTHORIZED: -32010, // Authentication required
   };
 
   switch (statusCode) {
@@ -258,7 +258,11 @@ function mcpErrorParts(error: APIError): { code: number; message: string; data?:
   if (wpError) {
     return { code: wpError.code, message: wpError.message ?? error.message, data: wpError.data };
   }
-  return { code: deriveMcpErrorCode(error), message: error.message, data: buildApiErrorData(error) };
+  return {
+    code: deriveMcpErrorCode(error),
+    message: error.message,
+    data: buildApiErrorData(error),
+  };
 }
 
 /**

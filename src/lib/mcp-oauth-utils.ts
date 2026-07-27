@@ -78,7 +78,7 @@ export async function discoverAuthorizationServerMetadata(
     const customHeaders = getCustomHeaders();
     const response = await proxyFetch(metadataUrl.toString(), {
       headers: {
-        'Accept': 'application/json',
+        Accept: 'application/json',
         ...customHeaders,
       },
     });
@@ -129,7 +129,7 @@ export async function discoverProtectedResourceMetadata(
     const customHeaders = getCustomHeaders();
     const response = await proxyFetch(metadataUrl.toString(), {
       headers: {
-        'Accept': 'application/json',
+        Accept: 'application/json',
         ...customHeaders,
       },
     });

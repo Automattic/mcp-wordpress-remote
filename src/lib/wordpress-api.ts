@@ -171,10 +171,7 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
       }
     } else {
       // Use legacy OAuth provider
-      logger.warn(
-        'Using legacy OAuth provider. Consider enabling PKCE for MCP compliance',
-        'AUTH'
-      );
+      logger.warn('Using legacy OAuth provider. Consider enabling PKCE for MCP compliance', 'AUTH');
 
       // Initialize coordinator for legacy flow
       if (!authCoordinator) {
@@ -339,14 +336,10 @@ async function executeWordPressRequest(
     // Determine method and tool name based on transport type
     const method = useJsonRpc ? requestData.method : requestData.method;
     const toolName = useJsonRpc
-      ? (requestData.params?.name || requestData.params?.tool)
-      : (requestData.name || requestData.tool || requestData.args?.tool);
+      ? requestData.params?.name || requestData.params?.tool
+      : requestData.name || requestData.tool || requestData.args?.tool;
 
-    if (
-      method === 'tools/call' &&
-      toolName &&
-      toolName.startsWith('wc_reports_')
-    ) {
+    if (method === 'tools/call' && toolName && toolName.startsWith('wc_reports_')) {
       // Use WooCommerce credentials for WooCommerce report tools
       username = CONFIG.WOO_CUSTOMER_KEY!;
       password = CONFIG.WOO_CUSTOMER_SECRET!;
@@ -540,7 +533,10 @@ async function executeWordPressRequest(
 
 async function refreshSession(failedSessionId: string | null): Promise<void> {
   if (failedSessionId && globalSessionId && globalSessionId !== failedSessionId) {
-    logger.info('Detected newer session while handling invalid-session error; skipping refresh', 'SESSION');
+    logger.info(
+      'Detected newer session while handling invalid-session error; skipping refresh',
+      'SESSION'
+    );
     return;
   }
 
@@ -617,11 +613,7 @@ export async function wpRequest(
 
       await refreshSession(sessionIdUsed);
 
-      const retriedResult = await executeWordPressRequest(
-        requestData,
-        useJsonRpc,
-        globalSessionId
-      );
+      const retriedResult = await executeWordPressRequest(requestData, useJsonRpc, globalSessionId);
       return retriedResult.responseData;
     }
 

@@ -196,7 +196,7 @@ export function getDefaultOAuthScopes(): string[] {
 /**
  * Parse custom headers from environment variable
  * Supports both JSON format and comma-separated format
- * 
+ *
  * JSON format: {"X-MCP-API-Key": "value", "X-Custom-Header": "value"}
  * Comma format: X-MCP-API-Key:value,X-Custom-Header:value
  */
@@ -254,7 +254,7 @@ export function validateConfig(): { isValid: boolean; errors: string[] } {
   const currentJwtToken = process.env.JWT_TOKEN || CONFIG.JWT_TOKEN;
   const currentUsername = process.env.WP_API_USERNAME || CONFIG.WP_API_USERNAME;
   const currentPassword = process.env.WP_API_PASSWORD || CONFIG.WP_API_PASSWORD;
-  const currentOAuthEnabled = (process.env.OAUTH_ENABLED === 'true') || CONFIG.OAUTH_ENABLED;
+  const currentOAuthEnabled = process.env.OAUTH_ENABLED === 'true' || CONFIG.OAUTH_ENABLED;
 
   // Check if we have at least one authentication method
   const hasJWT = !!currentJwtToken;

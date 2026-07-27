@@ -1,6 +1,6 @@
 /**
  * Request Handler Factory for MCP WordPress Remote
- * 
+ *
  * Creates standardized request handlers to eliminate repetitive code
  */
 
@@ -77,12 +77,12 @@ export function createRequestHandler(config: HandlerConfig, context: SessionCont
  */
 export function createWrappedHandler(config: HandlerConfig, context: SessionContext) {
   const handler = createRequestHandler(config, context);
-  
+
   return async (request: any) => {
     // Enhanced client message logging
     logger.info(`📩 Client Message: ${config.name}`, 'CLIENT');
     logger.info(`Request ID: ${request.id || 'none'} | Method: ${config.method}`, 'CLIENT');
-    
+
     // Log request parameters in a structured way
     if (request.params && Object.keys(request.params).length > 0) {
       logger.info(`Request parameters:`, 'CLIENT', {
@@ -93,45 +93,50 @@ export function createWrappedHandler(config: HandlerConfig, context: SessionCont
     } else {
       logger.info(`No request parameters`, 'CLIENT');
     }
-    
+
     // Log session context
     logger.debug(
       `Session context - ID: ${context.sessionId || 'none'}, Transport: ${context.transportType || 'detecting'}, Counter: ${context.requestIdCounter}`,
       'CLIENT'
     );
-    
+
     // Log full request object at debug level for detailed debugging
     logger.debug(`Complete client request object:`, 'CLIENT', request);
-    
+
     const startTime = Date.now();
-    
+
     try {
       const response = await handler(request);
       const duration = Date.now() - startTime;
-      
+
       logger.info(`✅ Client Response: ${config.name} completed in ${duration}ms`, 'CLIENT');
       logger.debug(`Response sent to client:`, 'CLIENT', {
         hasResponse: !!response,
-        responseKeys: response && typeof response === 'object' ? Object.keys(response) : 'primitive',
+        responseKeys:
+          response && typeof response === 'object' ? Object.keys(response) : 'primitive',
       });
-      
+
       return response;
     } catch (error) {
       const duration = Date.now() - startTime;
-      
+
       logger.error(`❌ Client Error: ${config.name} failed after ${duration}ms`, 'CLIENT', {
         error: error instanceof Error ? error.message : String(error),
         requestId: request.id,
       });
-      
+
       if (isAPIError(error)) {
         // Simple transport returns errors as a tool result.
         if (context.transportType === 'simple') {
-          logger.debug(`Converting APIError to MCP error format for ${config.name} (simple transport)`, 'MCP', {
-            statusCode: error.statusCode,
-            endpoint: error.endpoint,
-            message: error.message,
-          });
+          logger.debug(
+            `Converting APIError to MCP error format for ${config.name} (simple transport)`,
+            'MCP',
+            {
+              statusCode: error.statusCode,
+              endpoint: error.endpoint,
+              message: error.message,
+            }
+          );
           return convertAPIErrorToMcpError(error);
         }
 
@@ -140,12 +145,16 @@ export function createWrappedHandler(config: HandlerConfig, context: SessionCont
         // HTTP-status errors, and surfaces below-HTTP failures with code + hint.
         // Throwing a plain Error here would let the SDK flatten everything to
         // -32603 and drop WordPress's real error code.
-        logger.debug(`Converting APIError to McpError for ${config.name} (jsonrpc transport)`, 'MCP', {
-          statusCode: error.statusCode,
-          code: error.code,
-          endpoint: error.endpoint,
-          message: error.message,
-        });
+        logger.debug(
+          `Converting APIError to McpError for ${config.name} (jsonrpc transport)`,
+          'MCP',
+          {
+            statusCode: error.statusCode,
+            code: error.code,
+            endpoint: error.endpoint,
+            message: error.message,
+          }
+        );
         throw apiErrorToMcpError(error);
       }
 
@@ -162,109 +171,109 @@ export const HANDLER_CONFIGS: Record<string, HandlerConfig> = {
   listTools: {
     name: 'ListTools',
     method: 'tools/list',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'tools/list',
       cursor: request.params?.cursor,
     }),
   },
-  
+
   callTool: {
-    name: 'CallTool', 
+    name: 'CallTool',
     method: 'tools/call',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'tools/call',
       name: request.params.name,
       arguments: request.params.arguments,
     }),
   },
-  
+
   listResources: {
     name: 'ListResources',
     method: 'resources/list',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'resources/list',
       cursor: request.params?.cursor,
     }),
   },
-  
+
   listResourceTemplates: {
     name: 'ListResourceTemplates',
     method: 'resources/templates/list',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'resources/templates/list',
       cursor: request.params?.cursor,
     }),
   },
-  
+
   readResource: {
     name: 'ReadResource',
     method: 'resources/read',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'resources/read',
       uri: request.params.uri,
     }),
   },
-  
+
   subscribe: {
     name: 'Subscribe',
     method: 'resources/subscribe',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'resources/subscribe',
       uri: request.params.uri,
     }),
   },
-  
+
   unsubscribe: {
     name: 'Unsubscribe',
     method: 'resources/unsubscribe',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'resources/unsubscribe',
       uri: request.params.uri,
     }),
   },
-  
+
   listPrompts: {
     name: 'ListPrompts',
     method: 'prompts/list',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'prompts/list',
       cursor: request.params?.cursor,
     }),
   },
-  
+
   getPrompt: {
     name: 'GetPrompt',
     method: 'prompts/get',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'prompts/get',
       name: request.params.name,
       arguments: request.params.arguments,
     }),
   },
-  
+
   setLevel: {
     name: 'SetLevel',
     method: 'logging/setLevel',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'logging/setLevel',
       level: request.params.level,
     }),
   },
-  
+
   complete: {
     name: 'Complete',
     method: 'completion/complete',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'completion/complete',
       ref: request.params.ref,
       argument: request.params.argument,
     }),
   },
-  
+
   listRoots: {
     name: 'ListRoots',
     method: 'roots/list',
-    paramMapper: (request) => ({
+    paramMapper: request => ({
       method: 'roots/list',
     }),
   },

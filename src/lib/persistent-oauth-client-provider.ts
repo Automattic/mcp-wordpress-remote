@@ -16,8 +16,6 @@ import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
 import { logger } from './utils.js';
 import { CONFIG, getDefaultOAuthScopes, getOAuthCallbackPort } from './config.js';
 
-
-
 /**
  * Persistent WordPress OAuth Client Provider
  * Stores tokens permanently in ~/.mcp-auth/wordpress-remote-{version}/
@@ -200,10 +198,9 @@ export class PersistentWPOAuthClientProvider {
    */
   private async performAuthorization(): Promise<WPTokens> {
     // Use smart port selection or fixed port as configured
-    const callbackPort = this.options.callbackPort === 0 
-      ? await getOAuthCallbackPort() 
-      : this.options.callbackPort;
-      
+    const callbackPort =
+      this.options.callbackPort === 0 ? await getOAuthCallbackPort() : this.options.callbackPort;
+
     const callbackServerOptions = {
       port: callbackPort,
       host: this.options.host,
@@ -297,7 +294,10 @@ export class PersistentWPOAuthClientProvider {
     }
 
     // Check if authorizeEndpoint is a full URL or relative path
-    if (this.options.authorizeEndpoint.startsWith('http://') || this.options.authorizeEndpoint.startsWith('https://')) {
+    if (
+      this.options.authorizeEndpoint.startsWith('http://') ||
+      this.options.authorizeEndpoint.startsWith('https://')
+    ) {
       // Full URL - use as is
       return `${this.options.authorizeEndpoint}?${params.toString()}`;
     } else {
