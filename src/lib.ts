@@ -38,3 +38,7 @@ export { setupFetchPolyfill, proxyFetch, getProxyInfo, isFetchAvailable, getFetc
 
 // Export proxy utilities
 export { initializeProxy, isProxyConfigured, getProxyType, getAgentForUrl } from './lib/proxy-utils.js';
+
+// Export tool-call hooks (embedding packages can piggyback on the live session)
+export { registerToolCallHook } from './lib/tool-call-hooks.js';
+export type { ToolCallHook, ToolCallContext } from './lib/tool-call-hooks.js';

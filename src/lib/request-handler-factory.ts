@@ -11,6 +11,7 @@ import { isAPIError } from './oauth-types.js';
 import { convertAPIErrorToMcpError, apiErrorToMcpError } from './error-utils.js';
 import { prepareRequest, waitForInit, SessionContext } from './session-utils.js';
 import { WPRequestParams } from './mcp-types.js';
+import { runToolCallHooks } from './tool-call-hooks.js';
 
 /**
  * Configuration for creating a request handler
@@ -55,6 +56,17 @@ export function createRequestHandler(config: HandlerConfig, context: SessionCont
 
     // Send request to WordPress
     const response = await wpRequest(requestData, context.transportType === 'jsonrpc');
+
+    // A completed tools/call can trigger optional side effects over the same
+    // authenticated session. Result validation remains the MCP client's job.
+    if (config.method === 'tools/call') {
+      // Hook requests must ride the session's detected transport: prepare them
+      // the same way the proxied call was prepared, so a hook works on both
+      // JSON-RPC and simple sessions instead of wpRequest's JSON-RPC default.
+      const hookWpRequest = (params: WPRequestParams) =>
+        wpRequest(prepareRequest(params, {}, context), context.transportType === 'jsonrpc');
+      runToolCallHooks({ name: String(wpParams.name ?? ''), wpRequest: hookWpRequest });
+    }
 
     return response;
   };
