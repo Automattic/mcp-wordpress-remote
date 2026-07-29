@@ -94,7 +94,7 @@ class LockfileManager {
   /**
    * Wait for lock to be released
    */
-  async waitForRelease(timeout: number = CONFIG.LOCK_TIMEOUT): Promise<void> {
+  async waitForRelease(timeout: number = CONFIG.OAUTH_TIMEOUT): Promise<void> {
     const startTime = Date.now();
 
     return new Promise((resolve, reject) => {
@@ -114,13 +114,15 @@ class LockfileManager {
           return;
         }
 
-        if (Date.now() - startTime > timeout) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed >= timeout) {
           reject(new OAuthError('Timeout waiting for auth lock', 'LOCK_TIMEOUT'));
           return;
         }
 
-        // Check again in 1 second
-        setTimeout(checkLock, 1000);
+        // Poll normally once per second, without allowing the final poll to
+        // extend the caller's operation budget.
+        setTimeout(checkLock, Math.min(1000, timeout - elapsed));
       };
 
       logger.info('Waiting for other instance to complete authentication...', 'COORDINATION');

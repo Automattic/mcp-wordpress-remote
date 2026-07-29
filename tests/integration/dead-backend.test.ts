@@ -35,7 +35,11 @@ function collectMessages(proc: ChildProcess, count: number, ms = 15_000): Promis
     let buffer = '';
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error(`Timed out after ${ms}ms waiting for ${count} message(s), got ${messages.length}: ${JSON.stringify(messages)}`));
+      reject(
+        new Error(
+          `Timed out after ${ms}ms waiting for ${count} message(s), got ${messages.length}: ${JSON.stringify(messages)}`
+        )
+      );
     }, ms);
 
     function onData(chunk: Buffer) {
@@ -70,9 +74,10 @@ function collectMessages(proc: ChildProcess, count: number, ms = 15_000): Promis
 describe('dead backend integration', () => {
   let proxy: ChildProcess;
 
-  afterEach(() => {
-    if (proxy && !proxy.killed) {
-      proxy.kill();
+  afterEach(async () => {
+    if (proxy && proxy.exitCode === null && proxy.signalCode === null) {
+      proxy.kill('SIGKILL');
+      await once(proxy, 'exit');
     }
   });
 
@@ -84,7 +89,7 @@ describe('dead backend integration', () => {
         ...process.env,
         WP_API_URL: 'http://192.0.2.1:1',
         JWT_TOKEN: 'test-dead-backend-token',
-        LOG_LEVEL: '0',     // suppress logs on stderr
+        LOG_LEVEL: '0', // suppress logs on stderr
         NODE_ENV: 'test',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -161,13 +166,57 @@ describe('dead backend integration', () => {
     // The response must be a clean MCP error, NOT a forwarded malformed request.
     // The init-ready gate should have caught this and returned an error.
     expect(toolsResponse.error).toBeDefined();
-    expect(toolsResponse.error.message).toMatch(/WordPress connection failed during initialization/);
+    expect(toolsResponse.error.message).toMatch(
+      /WordPress connection failed during initialization/
+    );
 
     // The error must carry the underlying cause in `data` so the client can
     // explain why init failed, rather than a bare internal error (issue #61).
     expect(toolsResponse.error.data).toBeDefined();
     expect(toolsResponse.error.data.reason).toBe('failed');
   }, 30_000);
+
+  it('returns the structured fallback when headless implicit OAuth has no callback', async () => {
+    const oauthTimeout = 100;
+    proxy = spawn('node', [PROXY_PATH], {
+      env: {
+        ...process.env,
+        WP_API_URL: 'http://192.0.2.1:1',
+        OAUTH_ENABLED: 'true',
+        OAUTH_FLOW_TYPE: 'implicit',
+        OAUTH_USE_PKCE: 'false',
+        OAUTH_AUTHORIZE_ENDPOINT: '/authorize',
+        OAUTH_TIMEOUT_MS: String(oauthTimeout),
+        OAUTH_CALLBACK_PORT: String(20_000 + Math.floor(Math.random() * 10_000)),
+        WP_MCP_CONFIG_DIR: join(process.cwd(), '.tmp-implicit-oauth-auth'),
+        LOG_LEVEL: '0',
+        NODE_ENV: 'test',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    proxy.stderr!.resume();
+    await new Promise(r => setTimeout(r, 200));
+
+    const startedAt = Date.now();
+    send(proxy, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        clientInfo: { name: 'headless-implicit-oauth-test', version: '1.0.0' },
+        capabilities: {},
+      },
+    });
+
+    const [initResponse] = await collectMessages(proxy, 1, 2_000);
+
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(initResponse.result.capabilities).toEqual({
+      experimental: { connectionFailed: expect.any(Object) },
+    });
+    expect(initResponse.result.instructions).toMatch(/Connection Failed/i);
+  }, 5_000);
 
   // Healthy-backend integration test omitted: unit tests cover the happy path.
   // A full test here needs a real or mocked WordPress endpoint in the child process.
