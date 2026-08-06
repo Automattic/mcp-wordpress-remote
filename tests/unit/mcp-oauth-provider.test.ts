@@ -160,4 +160,26 @@ describe('MCPOAuthProvider client registration', () => {
     expect(scope.isDone()).toBe(false);
     expect(provider.getConfig().clientId).toBe('env-client');
   });
+
+  it('uses the selected callback port when exchanging the authorization code', async () => {
+    const { MCPOAuthProvider, generateServerUrlHash } = await loadModules();
+    const { writeTextFile } = await import('../../src/lib/persistent-auth-config.js');
+    const provider = new MCPOAuthProvider({
+      serverUrl,
+      clientId: 'dynamic-port-client',
+      scopes: ['read'],
+    });
+    (provider as any).config.tokenEndpoint = `${origin}/oauth/token`;
+
+    await writeTextFile(generateServerUrlHash(serverUrl), 'pkce_verifier.txt', 'a'.repeat(64));
+
+    const callback = 'http://127.0.0.1:49152/oauth/callback';
+    const exchange = nock(origin)
+      .post('/oauth/token', body => body.redirect_uri === callback)
+      .reply(200, { access_token: 'access-token', token_type: 'Bearer', expires_in: 3600 });
+
+    await (provider as any).exchangeCodeForTokens('authorization-code', callback);
+
+    expect(exchange.isDone()).toBe(true);
+  });
 });

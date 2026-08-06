@@ -403,7 +403,7 @@ export class MCPOAuthProvider {
       const authCode = await this.waitForAuthorizationCode();
 
       // Step 8: Exchange authorization code for access token
-      const tokens = await this.exchangeCodeForTokens(authCode);
+      const tokens = await this.exchangeCodeForTokens(authCode, actualRedirectUri);
 
       // Step 9: Store tokens
       await writeTokens(this.serverUrlHash, tokens);
@@ -456,7 +456,10 @@ export class MCPOAuthProvider {
   /**
    * Exchange authorization code for access tokens
    */
-  private async exchangeCodeForTokens(code: string): Promise<WPTokens> {
+  private async exchangeCodeForTokens(
+    code: string,
+    redirectUri = this.config.redirectUri
+  ): Promise<WPTokens> {
     try {
       const codeVerifier = await readTextFile(
         this.serverUrlHash,
@@ -467,7 +470,7 @@ export class MCPOAuthProvider {
       const tokenResponse = await exchangeAuthorizationCode(
         this.config.tokenEndpoint!,
         code,
-        this.config.redirectUri,
+        redirectUri,
         this.config.clientId!,
         codeVerifier,
         CONFIG.OAUTH_RESOURCE_INDICATOR ? this.config.resource : undefined
