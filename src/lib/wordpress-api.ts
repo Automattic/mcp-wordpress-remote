@@ -22,6 +22,12 @@ import {
 import { PersistentWPOAuthClientProvider } from './persistent-oauth-client-provider.js';
 import { MCPOAuthProvider } from './mcp-oauth-provider.js';
 import { createLazyWPAuthCoordinator } from './coordination.js';
+import {
+  DEFAULT_PROTOCOL_VERSION,
+  LEGACY_PROTOCOL_VERSION,
+  isSupportedProtocolVersion,
+  selectProtocolVersion,
+} from './protocol-version.js';
 
 /**
  * WordPress API request function with OAuth, JWT, and Basic Auth support
@@ -38,6 +44,7 @@ let globalEvents: EventEmitter | null = null;
 
 // Global session ID received from WordPress server
 let globalSessionId: string | null = null;
+let negotiatedProtocolVersion: string | null = null;
 let lastInitializeRequest: { requestData: any; useJsonRpc: boolean } | null = null;
 let sessionRefreshPromise: Promise<void> | null = null;
 
@@ -231,6 +238,28 @@ function isInitializeRequest(requestData: any): boolean {
   return requestData?.method === 'initialize';
 }
 
+function recordProtocolVersion(requestData: any, result: any): void {
+  if (!isInitializeRequest(requestData)) return;
+
+  // Preserve the legacy response fallback used by the stdio initialize handler.
+  const version = result?.protocolVersion || LEGACY_PROTOCOL_VERSION;
+  if (!isSupportedProtocolVersion(version)) {
+    throw new APIError(
+      `Unsupported WordPress MCP protocol version: ${version}`,
+      0,
+      getRequestUrl()
+    );
+  }
+  if (negotiatedProtocolVersion && negotiatedProtocolVersion !== version) {
+    throw new APIError(
+      'WordPress changed the negotiated MCP protocol version; reconnect the client',
+      0,
+      getRequestUrl()
+    );
+  }
+  negotiatedProtocolVersion = version;
+}
+
 function cacheInitializeRequest(requestData: any, useJsonRpc: boolean): void {
   lastInitializeRequest = {
     requestData: cloneRequestData(requestData),
@@ -373,6 +402,10 @@ async function executeWordPressRequest(
 
   // Get custom headers early to check if they can serve as authentication
   const customHeaders = getCustomHeaders();
+  // Header names are case-insensitive; configuration cannot override negotiation.
+  for (const name of Object.keys(customHeaders)) {
+    if (name.toLowerCase() === 'mcp-protocol-version') delete customHeaders[name];
+  }
   const hasCustomHeaders = Object.keys(customHeaders).length > 0;
 
   // Ensure we have an authorization header OR custom headers for authentication
@@ -391,8 +424,12 @@ async function executeWordPressRequest(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
-    'MCP-Protocol-Version': '2025-06-18', // MCP protocol version
     ...customHeaders, // Merge custom headers
+    'MCP-Protocol-Version': isInitializeRequest(requestData)
+      ? selectProtocolVersion(
+          useJsonRpc ? requestData.params?.protocolVersion : requestData.protocolVersion
+        )
+      : negotiatedProtocolVersion || DEFAULT_PROTOCOL_VERSION,
   };
 
   // Add Authorization header only if we have one
@@ -489,6 +526,7 @@ async function executeWordPressRequest(
             jsonrpcResponse.error
           );
         } else if (jsonrpcResponse.result !== undefined) {
+          recordProtocolVersion(requestData, jsonrpcResponse.result);
           // Extract result from JSON-RPC response
           return {
             responseData: jsonrpcResponse.result as WordPressResponse,
@@ -499,6 +537,7 @@ async function executeWordPressRequest(
     }
 
     // For simple transport or non-JSON-RPC responses, return response as-is
+    recordProtocolVersion(requestData, responseData);
     return {
       responseData: responseData as WordPressResponse,
       sessionIdUsed,
@@ -591,6 +630,11 @@ export async function wpRequest(
   const allowSessionRecovery = options.allowSessionRecovery !== false;
 
   if (isInitializeRequest(requestData)) {
+    const params = useJsonRpc ? requestData.params : requestData;
+    const protocolVersion = selectProtocolVersion(params?.protocolVersion);
+    requestData = useJsonRpc
+      ? { ...requestData, params: { ...params, protocolVersion } }
+      : { ...requestData, protocolVersion };
     cacheInitializeRequest(requestData, useJsonRpc);
   }
 

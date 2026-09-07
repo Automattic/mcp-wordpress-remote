@@ -26,6 +26,7 @@ import {
   ListRootsRequestSchema,
 } from './lib/mcp-types.js';
 import { InitializeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { LEGACY_PROTOCOL_VERSION, selectProtocolVersion } from './lib/protocol-version.js';
 
 // Check Node.js version
 validateNodeVersion(18);
@@ -98,7 +99,7 @@ async function WordPressProxy() {
 
       // Return the WordPress server's initialize response
       const wordpressInitResponse = {
-        protocolVersion: initResult.protocolVersion || '2025-06-18',
+        protocolVersion: initResult.protocolVersion || LEGACY_PROTOCOL_VERSION,
         serverInfo: initResult.serverInfo,
         capabilities: initResult.capabilities,
         instructions: initResult.instructions || 'MCP WordPress Remote Proxy Server',
@@ -128,7 +129,7 @@ async function WordPressProxy() {
       // carrying these details to the client).
       resolveInit(sessionContext, true, connectionError);
 
-      const clientProtocolVersion = request?.params?.protocolVersion || '2025-06-18';
+      const clientProtocolVersion = selectProtocolVersion(request?.params?.protocolVersion);
 
       // Return a fallback response that advertises NO real capabilities — only
       // `experimental.connectionFailed`. The connection is dead, so it cannot
