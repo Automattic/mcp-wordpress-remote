@@ -67,6 +67,81 @@ describe('WordPress API Module', () => {
   });
 
   describe('wpRequest function', () => {
+    describe('Protocol negotiation', () => {
+      beforeEach(() => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://test-site.com',
+          JWT_TOKEN: 'test-token',
+          CUSTOM_HEADERS: '{"mcp-protocol-version":"2025-06-18"}',
+        });
+        jest.resetModules();
+      });
+
+      it.each<[boolean, string | undefined, string, string]>([
+        [true, '2025-11-25', '2025-11-25', '2025-11-25'],
+        [true, '2025-11-25', '2025-11-25', '2025-06-18'],
+        [false, '2025-11-25', '2025-11-25', '2025-11-25'],
+        [false, '2025-06-18', '2025-06-18', '2025-06-18'],
+        [true, '2026-01-01', '2025-11-25', '2025-11-25'],
+        [true, undefined, '2025-11-25', '2025-11-25'],
+      ])('aligns body and headers: jsonrpc=%s client=%s offered=%s accepted=%s', async (jsonrpc, client, offered, accepted) => {
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+        const request = jsonrpc
+          ? { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: client } }
+          : { method: 'initialize', protocolVersion: client };
+        const original = JSON.stringify(request);
+        nock('https://test-site.com')
+          .matchHeader('MCP-Protocol-Version', offered)
+          .post(WP_MCP_ENDPOINT, body => (jsonrpc ? body.params : body).protocolVersion === offered)
+          .reply(200, jsonrpc ? createJsonRpcResult(1, { protocolVersion: accepted }) : { protocolVersion: accepted });
+        await wpRequest(request, jsonrpc);
+        expect(JSON.stringify(request)).toBe(original);
+        nock('https://test-site.com')
+          .matchHeader('MCP-Protocol-Version', accepted)
+          .post(WP_MCP_ENDPOINT)
+          .reply(200, { tools: [] });
+        await wpRequest({ method: 'tools/list' }, jsonrpc);
+        expect(nock.isDone()).toBe(true);
+      });
+
+      it('rejects an unsupported backend version', async () => {
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+        nock('https://test-site.com').post(WP_MCP_ENDPOINT)
+          .reply(200, createJsonRpcResult(1, { protocolVersion: '2026-01-01' }));
+        await expect(wpRequest({ method: 'initialize', params: {} }))
+          .rejects.toThrow('Unsupported WordPress MCP protocol version');
+      });
+
+      it('keeps headers aligned with the legacy fallback when the version is absent', async () => {
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+        nock('https://test-site.com').post(WP_MCP_ENDPOINT)
+          .reply(200, createJsonRpcResult(1, { capabilities: {} }));
+        await wpRequest({ method: 'initialize', params: {} });
+        nock('https://test-site.com').matchHeader('MCP-Protocol-Version', '2025-06-18')
+          .post(WP_MCP_ENDPOINT).reply(200, { tools: [] });
+        await wpRequest({ method: 'tools/list' });
+        expect(nock.isDone()).toBe(true);
+      });
+
+      it('uses the negotiated version after a session refresh', async () => {
+        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+        const init = { method: 'initialize', params: { protocolVersion: '2025-11-25' } };
+        nock('https://test-site.com').matchHeader('MCP-Protocol-Version', '2025-11-25')
+          .post(WP_MCP_ENDPOINT).reply(200, createJsonRpcResult(1, { protocolVersion: '2025-06-18' }), { 'Mcp-Session-Id': 'old' });
+        await wpRequest(init);
+        nock('https://test-site.com').matchHeader('MCP-Protocol-Version', '2025-06-18')
+          .post(WP_MCP_ENDPOINT).reply(400, createJsonRpcError(2, -32005, 'Session not found'));
+        nock('https://test-site.com').matchHeader('MCP-Protocol-Version', '2025-11-25')
+          .post(WP_MCP_ENDPOINT, body => body.method === 'initialize')
+          .reply(200, createJsonRpcResult(1, { protocolVersion: '2025-06-18' }), { 'Mcp-Session-Id': 'new' });
+        nock('https://test-site.com').matchHeader('MCP-Protocol-Version', '2025-06-18')
+          .matchHeader('Mcp-Session-Id', 'new').post(WP_MCP_ENDPOINT)
+          .reply(200, createJsonRpcResult(2, { tools: [] }));
+        expect(await wpRequest({ method: 'tools/list' })).toEqual({ tools: [] });
+        expect(nock.isDone()).toBe(true);
+      });
+    });
+
     describe('Environment validation', () => {
       it('should throw AuthError when configuration validation fails', async () => {
         restoreEnv = mockEnv({
@@ -460,6 +535,7 @@ describe('WordPress API Module', () => {
           id: 1,
           method: 'initialize',
           params: {
+            protocolVersion: '2025-11-25',
             clientInfo: {
               name: 'test-client',
               version: '1.0.0',
@@ -542,6 +618,7 @@ describe('WordPress API Module', () => {
           id: 1,
           method: 'initialize',
           params: {
+            protocolVersion: '2025-11-25',
             clientInfo: {
               name: 'test-client',
               version: '1.0.0',
@@ -617,6 +694,7 @@ describe('WordPress API Module', () => {
           id: 1,
           method: 'initialize',
           params: {
+            protocolVersion: '2025-11-25',
             clientInfo: {
               name: 'test-client',
               version: '1.0.0',
@@ -786,6 +864,7 @@ describe('WordPress API Module', () => {
           id: 1,
           method: 'initialize',
           params: {
+            protocolVersion: '2025-11-25',
             clientInfo: {
               name: 'test-client',
               version: '1.0.0',
@@ -834,6 +913,7 @@ describe('WordPress API Module', () => {
           id: 1,
           method: 'initialize',
           params: {
+            protocolVersion: '2025-11-25',
             clientInfo: {
               name: 'test-client',
               version: '1.0.0',
@@ -866,6 +946,7 @@ describe('WordPress API Module', () => {
           id: 1,
           method: 'initialize',
           params: {
+            protocolVersion: '2025-11-25',
             clientInfo: {
               name: 'test-client',
               version: '1.0.0',
