@@ -15,6 +15,8 @@ import { logger } from './utils.js';
 // Dynamic imports for PAC resolver (has WASM dependencies)
 type PacResolverFn = (url: string) => Promise<string>;
 
+const DEFAULT_PAC_LOAD_TIMEOUT_MS = 5000;
+
 type ProxyAgent = SocksProxyAgent | HttpsProxyAgent<string>;
 
 interface ProxyConfig {
@@ -25,6 +27,7 @@ interface ProxyConfig {
 
 let proxyConfig: ProxyConfig = { type: 'none' };
 let initializationPromise: Promise<void> | null = null;
+let refreshPromise: Promise<void> | null = null;
 
 interface MacOsProxyInfo {
   pacUrl: string | null;
@@ -75,6 +78,45 @@ function sanitizeProxyUrl(url: string): string {
     return parsed.toString();
   } catch {
     return url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@');
+  }
+}
+
+function getPacLoadTimeoutMs(): number {
+  const configured = parseInt(process.env.PROXY_PAC_TIMEOUT_MS || '', 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_PAC_LOAD_TIMEOUT_MS;
+}
+
+async function loadPacResolver(pacUrl: string, signal: AbortSignal): Promise<PacResolverFn> {
+  const response = await fetch(pacUrl, { signal });
+  if (!response.ok) {
+    throw new Error(`PAC request failed with HTTP ${response.status}`);
+  }
+  const pacScript = await response.text();
+
+  const { getQuickJS } = await import('@tootallnate/quickjs-emscripten');
+  const { createPacResolver } = await import('pac-resolver');
+  const qjs = await getQuickJS();
+  return createPacResolver(qjs, pacScript);
+}
+
+async function loadPacResolverWithTimeout(pacUrl: string): Promise<PacResolverFn> {
+  const timeoutMs = getPacLoadTimeoutMs();
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`PAC initialization timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([loadPacResolver(pacUrl, controller.signal), timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -164,17 +206,58 @@ export async function initializeProxy(
     return initializationPromise;
   }
 
-  initializationPromise = doInitializeProxy(detectMacOs).catch(error => {
-    initializationPromise = null;
-    throw error;
-  });
+  initializationPromise = resolveProxyConfig(detectMacOs)
+    .then(config => {
+      proxyConfig = config;
+    })
+    .catch(error => {
+      initializationPromise = null;
+      throw error;
+    });
   return initializationPromise;
 }
 
 /**
- * Internal initialization logic
+ * Refresh proxy configuration from the current environment and operating-system
+ * settings. Concurrent refreshes share the same work, while later refreshes can
+ * run again after the system proxy changes.
+ *
+ * The active configuration is replaced only after detection completes so
+ * in-flight requests never observe a partially initialized PAC resolver.
+ *
+ * @param detectMacOs - Optional override for macOS proxy detection (testing seam)
  */
-async function doInitializeProxy(detectMacOs: MacOsProxyDetector): Promise<void> {
+export async function refreshProxy(
+  detectMacOs: MacOsProxyDetector = detectMacOsProxy
+): Promise<void> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  const currentRefresh = (async () => {
+    if (initializationPromise) {
+      await initializationPromise;
+    }
+
+    const config = await resolveProxyConfig(detectMacOs);
+    proxyConfig = config;
+  })();
+
+  refreshPromise = currentRefresh;
+
+  try {
+    await currentRefresh;
+  } finally {
+    if (refreshPromise === currentRefresh) {
+      refreshPromise = null;
+    }
+  }
+}
+
+/**
+ * Resolve a complete proxy configuration without changing the active one.
+ */
+async function resolveProxyConfig(detectMacOs: MacOsProxyDetector): Promise<ProxyConfig> {
   // 1. Explicit environment proxy takes precedence over auto-detected system
   //    proxies. Setting SOCKS_PROXY/HTTPS_PROXY/ALL_PROXY/HTTP_PROXY is a
   //    deliberate operator choice — including the URL scheme. The scheme
@@ -187,9 +270,8 @@ async function doInitializeProxy(detectMacOs: MacOsProxyDetector): Promise<void>
   //    most HTTP clients.
   const envProxy = detectEnvProxy();
   if (envProxy) {
-    proxyConfig = { type: 'env', envProxy };
     logger.info(`Proxy configured from environment: ${sanitizeProxyUrl(envProxy.url)}`, 'PROXY');
-    return;
+    return { type: 'env', envProxy };
   }
 
   // 2. Try macOS system proxy (single scutil call for both PAC and SOCKS)
@@ -198,24 +280,17 @@ async function doInitializeProxy(detectMacOs: MacOsProxyDetector): Promise<void>
   // 2a. PAC file
   if (macProxy?.pacUrl) {
     try {
-      // Fetch PAC file directly (not through proxy)
-      const response = await fetch(macProxy.pacUrl);
-      const pacScript = await response.text();
+      // Fetch and compile the PAC directly, within a bounded startup window.
+      // The returned resolver is still local here, so timeout or late
+      // completion cannot partially update the active proxy configuration.
+      const resolver = await loadPacResolverWithTimeout(macProxy.pacUrl);
 
-      // Dynamic import for PAC resolver (has WASM dependencies)
-      const { getQuickJS } = await import('@tootallnate/quickjs-emscripten');
-      const { createPacResolver } = await import('pac-resolver');
-
-      // Initialize QuickJS for PAC evaluation
-      const qjs = await getQuickJS();
-      const resolver = createPacResolver(qjs, pacScript);
-
-      proxyConfig = {
+      const config: ProxyConfig = {
         type: 'pac',
         pacResolver: resolver,
       };
       logger.info(`PAC proxy initialized from ${sanitizeProxyUrl(macProxy.pacUrl)}`, 'PROXY');
-      return;
+      return config;
     } catch (error) {
       logger.error(`Failed to initialize PAC proxy: ${error}`, 'PROXY');
     }
@@ -226,14 +301,13 @@ async function doInitializeProxy(detectMacOs: MacOsProxyDetector): Promise<void>
     const { host, port } = macProxy.socks;
     const bracketedHost = host.includes(':') ? `[${host}]` : host;
     const socksUrl = `socks5h://${bracketedHost}:${port}`;
-    proxyConfig = { type: 'env', envProxy: { url: socksUrl, type: 'socks' } };
     logger.info(`System SOCKS proxy configured: ${sanitizeProxyUrl(socksUrl)}`, 'PROXY');
-    return;
+    return { type: 'env', envProxy: { url: socksUrl, type: 'socks' } };
   }
 
   // 3. No proxy configured
   logger.debug('No proxy configured', 'PROXY');
-  proxyConfig = { type: 'none' };
+  return { type: 'none' };
 }
 
 /**

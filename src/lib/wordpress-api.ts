@@ -7,7 +7,7 @@ import { createParser } from 'eventsource-parser';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger, LogLevel } from './utils.js';
 import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from './config.js';
-import { proxyFetch } from './fetch-utils.js';
+import { isProxyFetchError, proxyFetch } from './fetch-utils.js';
 import { WPTokens, AuthError, APIError } from './oauth-types.js';
 import {
   extractNetworkErrorCode,
@@ -22,6 +22,8 @@ import {
 import { PersistentWPOAuthClientProvider } from './persistent-oauth-client-provider.js';
 import { MCPOAuthProvider } from './mcp-oauth-provider.js';
 import { createLazyWPAuthCoordinator } from './coordination.js';
+import { runRequestRecoveryHooks } from './request-recovery-hooks.js';
+import { refreshProxy } from './proxy-utils.js';
 
 /**
  * WordPress API request function with OAuth, JWT, and Basic Auth support
@@ -43,6 +45,7 @@ let sessionRefreshPromise: Promise<void> | null = null;
 
 const WP_MCP_ENDPOINT = '/wp/v2/wpmcp';
 const INVALID_SESSION_ERROR_CODES = new Set([-32602, -32005]);
+const INTERNAL_ERROR_CODE = -32603;
 const INVALID_SESSION_ERROR_MESSAGE = 'Invalid or expired session';
 const SESSION_NOT_FOUND_ERROR_MESSAGE = 'Session not found';
 
@@ -262,13 +265,16 @@ function isInvalidSessionError(error: APIError): boolean {
       : errorResponse;
   const code = typeof jsonRpcError?.code === 'number' ? jsonRpcError.code : null;
   const message = typeof jsonRpcError?.message === 'string' ? jsonRpcError.message : '';
+  const explicitlyExpired = message.includes(INVALID_SESSION_ERROR_MESSAGE);
+
+  if (code === INTERNAL_ERROR_CODE) {
+    return explicitlyExpired;
+  }
 
   return (
     code !== null &&
     INVALID_SESSION_ERROR_CODES.has(code) &&
-    (message === INVALID_SESSION_ERROR_MESSAGE ||
-      message.includes(SESSION_NOT_FOUND_ERROR_MESSAGE) ||
-      message.includes(INVALID_SESSION_ERROR_MESSAGE))
+    (message.includes(SESSION_NOT_FOUND_ERROR_MESSAGE) || explicitlyExpired)
   );
 }
 
@@ -284,6 +290,7 @@ function updateSessionId(sessionId: string): void {
 interface RequestExecutionResult {
   responseData: WordPressResponse;
   sessionIdUsed: string | null;
+  redirected: boolean;
 }
 
 async function executeWordPressRequest(
@@ -434,11 +441,13 @@ async function executeWordPressRequest(
     signal: AbortSignal.timeout(timeoutMs),
   };
 
+  let redirected = false;
   try {
     logger.api('Sending request to WordPress API...');
     logger.debug(`Request URL: ${url}`, 'API');
     logger.debug(`Request method: ${method} (timeout ${timeoutMs}ms)`, 'API');
     const response = await proxyFetch(url, fetchOptions);
+    redirected = response.redirected;
     logger.debug(`Response status: ${response.status}`, 'API');
 
     const rawBody = await response.text();
@@ -450,7 +459,10 @@ async function executeWordPressRequest(
         `WordPress API error (${response.status}): ${rawBody}`,
         response.status,
         url,
-        rawBody
+        rawBody,
+        undefined,
+        false,
+        redirected
       );
     }
 
@@ -486,13 +498,17 @@ async function executeWordPressRequest(
             `WordPress JSON-RPC error: ${jsonrpcResponse.error.message}`,
             jsonrpcResponse.error.code || 500,
             url,
-            jsonrpcResponse.error
+            jsonrpcResponse.error,
+            undefined,
+            false,
+            redirected
           );
         } else if (jsonrpcResponse.result !== undefined) {
           // Extract result from JSON-RPC response
           return {
             responseData: jsonrpcResponse.result as WordPressResponse,
             sessionIdUsed,
+            redirected,
           };
         }
       }
@@ -502,6 +518,7 @@ async function executeWordPressRequest(
     return {
       responseData: responseData as WordPressResponse,
       sessionIdUsed,
+      redirected,
     };
   } catch (error) {
     if (error instanceof APIError) {
@@ -514,7 +531,9 @@ async function executeWordPressRequest(
     // (node-fetch uses "AbortError"). DOMException is not `instanceof Error` in
     // Node, so match on the name directly. Normalize to ETIMEDOUT so it carries
     // a meaningful code and hint.
-    const errorName = (error as { name?: unknown })?.name;
+    const viaProxy = isProxyFetchError(error);
+    const underlyingError = viaProxy ? error.cause : error;
+    const errorName = (underlyingError as { name?: unknown })?.name;
     const isTimeout = errorName === 'TimeoutError' || errorName === 'AbortError';
     const code = isTimeout ? 'ETIMEDOUT' : extractNetworkErrorCode(error);
     const hint = getConnectionErrorHint(code);
@@ -527,7 +546,15 @@ async function executeWordPressRequest(
     if (hint) {
       logger.error(hint, 'API');
     }
-    throw new APIError(errorMessage, 0, url, undefined, code);
+    throw new APIError(
+      errorMessage,
+      0,
+      url,
+      undefined,
+      code,
+      viaProxy,
+      redirected || (viaProxy && error.redirected)
+    );
   }
 }
 
@@ -595,13 +622,30 @@ export async function wpRequest(
   }
 
   const sessionIdUsed = globalSessionId;
+  let requestRecoveryAttempted = false;
 
   try {
     const result = await executeWordPressRequest(requestData, useJsonRpc, sessionIdUsed);
+
+    if (
+      !result.redirected &&
+      (await runRequestRecoveryHooks({
+        method: requestData?.method || 'unknown',
+        refreshProxy,
+        response: result.responseData,
+      }))
+    ) {
+      requestRecoveryAttempted = true;
+      const retriedResult = await executeWordPressRequest(requestData, useJsonRpc, globalSessionId);
+      return retriedResult.responseData;
+    }
+
     return result.responseData;
   } catch (error) {
     if (
+      !requestRecoveryAttempted &&
       error instanceof APIError &&
+      !error.redirected &&
       allowSessionRecovery &&
       !isInitializeRequest(requestData) &&
       isInvalidSessionError(error)
@@ -613,6 +657,20 @@ export async function wpRequest(
 
       await refreshSession(sessionIdUsed);
 
+      const retriedResult = await executeWordPressRequest(requestData, useJsonRpc, globalSessionId);
+      return retriedResult.responseData;
+    }
+
+    if (
+      !requestRecoveryAttempted &&
+      error instanceof APIError &&
+      !error.redirected &&
+      (await runRequestRecoveryHooks({
+        method: requestData?.method || 'unknown',
+        refreshProxy,
+        error,
+      }))
+    ) {
       const retriedResult = await executeWordPressRequest(requestData, useJsonRpc, globalSessionId);
       return retriedResult.responseData;
     }

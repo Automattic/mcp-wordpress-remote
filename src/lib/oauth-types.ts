@@ -136,13 +136,19 @@ export class APIError extends Error {
   public readonly response?: any;
   /** Underlying network/TLS error code (e.g. "UNABLE_TO_VERIFY_LEAF_SIGNATURE"), when the failure was below the HTTP layer. */
   public readonly code?: string;
+  /** Whether the failed network attempt selected a proxy agent. */
+  public readonly viaProxy: boolean;
+  /** A prior redirect hop may already have executed the original operation. */
+  public readonly redirected: boolean;
 
   constructor(
     message: string,
     statusCode: number,
     endpoint: string,
     response?: any,
-    code?: string
+    code?: string,
+    viaProxy: boolean = false,
+    redirected: boolean = false
   ) {
     super(message);
     this.name = 'APIError';
@@ -150,6 +156,8 @@ export class APIError extends Error {
     this.endpoint = endpoint;
     this.response = response;
     this.code = code;
+    this.viaProxy = viaProxy;
+    this.redirected = redirected;
 
     // Ensure proper prototype chain
     Object.setPrototypeOf(this, APIError.prototype);
