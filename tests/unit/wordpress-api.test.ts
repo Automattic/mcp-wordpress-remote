@@ -449,7 +449,10 @@ describe('WordPress API Module', () => {
         ).rejects.toThrow('No "message" event');
       });
 
-      it('should refresh the session once and retry the original request', async () => {
+      it.each([
+        ['invalid-params response', -32602],
+        ['internal-error wrapper', -32603],
+      ])('should refresh the session once for an expired-session %s', async (_label, errorCode) => {
         restoreEnv = mockEnv({
           WP_API_URL: 'https://my-wp-site.com',
           JWT_TOKEN: 'test-token',
@@ -505,7 +508,7 @@ describe('WordPress API Module', () => {
         nock('https://my-wp-site.com')
           .post(WP_MCP_ENDPOINT, toolRequest)
           .matchHeader('mcp-session-id', 'session-1')
-          .reply(200, createJsonRpcError(2, -32602, 'Invalid or expired session'));
+          .reply(200, createJsonRpcError(2, errorCode, 'Invalid or expired session'));
 
         nock('https://my-wp-site.com')
           .post(WP_MCP_ENDPOINT, toolRequest)
@@ -731,6 +734,189 @@ describe('WordPress API Module', () => {
         );
       });
 
+      it('allows an opt-in hook to recover a response and retry it once', async () => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+        });
+
+        const request = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: {} };
+        const recoverableResponse = { isError: true, content: [{ type: 'text', text: 'retry' }] };
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT, request)
+          .reply(200, createJsonRpcResult(1, recoverableResponse))
+          .post(WP_MCP_ENDPOINT, request)
+          .reply(200, createJsonRpcResult(1, { content: [] }));
+
+        const { registerRequestRecoveryHook } = await import(
+          '../../src/lib/request-recovery-hooks.js'
+        );
+        const hook = jest.fn(async ({ response, refreshProxy }: any) => {
+          expect(typeof refreshProxy).toBe('function');
+          return response?.isError === true;
+        });
+        const unregister = registerRequestRecoveryHook(hook);
+
+        try {
+          const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+          await expect(wpRequest(request, true)).resolves.toEqual({ content: [] });
+          expect(hook).toHaveBeenCalledTimes(1);
+          expect(nock.isDone()).toBe(true);
+        } finally {
+          unregister();
+        }
+      });
+
+      it('allows an opt-in hook to recover an APIError and retry it once', async () => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+        });
+
+        const request = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT, request)
+          .reply(503, 'temporarily unavailable')
+          .post(WP_MCP_ENDPOINT, request)
+          .reply(200, createJsonRpcResult(1, { tools: [] }));
+
+        const { registerRequestRecoveryHook } = await import(
+          '../../src/lib/request-recovery-hooks.js'
+        );
+        const hook = jest.fn(async ({ error, refreshProxy }: any) => {
+          expect(typeof refreshProxy).toBe('function');
+          return error?.statusCode === 503;
+        });
+        const unregister = registerRequestRecoveryHook(hook);
+
+        try {
+          const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+          await expect(wpRequest(request, true)).resolves.toEqual({ tools: [] });
+          expect(hook).toHaveBeenCalledTimes(1);
+          expect(nock.isDone()).toBe(true);
+        } finally {
+          unregister();
+        }
+      });
+
+      it('does not run recovery hooks again for the retry outcome', async () => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+        });
+
+        const request = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: {} };
+        const recoverableResponse = { isError: true, content: [{ type: 'text', text: 'retry' }] };
+
+        nock('https://my-wp-site.com')
+          .post(WP_MCP_ENDPOINT, request)
+          .twice()
+          .reply(200, createJsonRpcResult(1, recoverableResponse));
+
+        const { registerRequestRecoveryHook } = await import(
+          '../../src/lib/request-recovery-hooks.js'
+        );
+        const hook = jest.fn(async () => true);
+        const unregister = registerRequestRecoveryHook(hook);
+
+        try {
+          const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+          await expect(wpRequest(request, true)).resolves.toEqual(recoverableResponse);
+          expect(hook).toHaveBeenCalledTimes(1);
+          expect(nock.isDone()).toBe(true);
+        } finally {
+          unregister();
+        }
+      });
+
+      it.each(['response', 'APIError'])(
+        'surfaces a thrown retry failure after recovering a %s without another recovery',
+        async firstOutcome => {
+          restoreEnv = mockEnv({
+            WP_API_URL: 'https://my-wp-site.com',
+            JWT_TOKEN: 'test-token',
+          });
+
+          const request = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: {} };
+          const recoverableResponse = { isError: true, content: [{ type: 'text', text: 'retry' }] };
+          let requestCount = 0;
+          nock('https://my-wp-site.com')
+            .persist()
+            .post(WP_MCP_ENDPOINT, request)
+            .reply(() => {
+              requestCount++;
+              if (requestCount === 1 && firstOutcome === 'response') {
+                return [200, createJsonRpcResult(1, recoverableResponse)];
+              }
+              return [503, `failure on attempt ${requestCount}`];
+            });
+
+          const { registerRequestRecoveryHook } = await import(
+            '../../src/lib/request-recovery-hooks.js'
+          );
+          // Generic embedding policy: both outcomes would qualify if called again.
+          const hook = jest.fn(async () => true);
+          const unregister = registerRequestRecoveryHook(hook);
+
+          try {
+            const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+            await expect(wpRequest(request, true)).rejects.toMatchObject({
+              statusCode: 503,
+              message: expect.stringContaining('failure on attempt 2'),
+            });
+            expect(requestCount).toBe(2);
+            expect(hook).toHaveBeenCalledTimes(1);
+          } finally {
+            unregister();
+          }
+        }
+      );
+
+      it.each(['response', 'session error'])('does not recover a redirected %s', async outcome => {
+        restoreEnv = mockEnv({
+          WP_API_URL: 'https://my-wp-site.com',
+          JWT_TOKEN: 'test-token',
+          USE_SYSTEM_PROXY: 'false',
+        });
+        const request = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: {} };
+        const denied = { isError: true, content: [{ type: 'text', text: 'retry' }] };
+        const response = new Response(
+          JSON.stringify(
+            outcome === 'response'
+              ? createJsonRpcResult(1, denied)
+              : createJsonRpcError(1, -32603, 'Invalid or expired session')
+          )
+        );
+        Object.defineProperty(response, 'redirected', { value: true });
+        const originalFetch = globalThis.fetch;
+        const fetchMock = jest.fn(async () => response);
+        globalThis.fetch = fetchMock as typeof fetch;
+        const { registerRequestRecoveryHook } = await import(
+          '../../src/lib/request-recovery-hooks.js'
+        );
+        const hook = jest.fn(async () => true);
+        const unregister = registerRequestRecoveryHook(hook);
+        try {
+          const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+          const result = wpRequest(request, true);
+          if (outcome === 'response') {
+            await expect(result).resolves.toEqual(denied);
+          } else {
+            await expect(result).rejects.toMatchObject({
+              redirected: true,
+              statusCode: -32603,
+            });
+          }
+          expect(hook).not.toHaveBeenCalled();
+          expect(fetchMock).toHaveBeenCalledTimes(1);
+        } finally {
+          unregister();
+          globalThis.fetch = originalFetch;
+        }
+      });
+
       it('should time out a slow request and report ETIMEDOUT', async () => {
         // Regression for issue #61: an unbounded fetch let a stalled upstream
         // hang the initialize handshake for ~60s. The request must now abort.
@@ -775,53 +961,60 @@ describe('WordPress API Module', () => {
         await expect(wpRequest({ method: 'initialize' })).rejects.toThrow();
       });
 
-      it('should not refresh the session for unrelated invalid-params errors', async () => {
-        restoreEnv = mockEnv({
-          WP_API_URL: 'https://my-wp-site.com',
-          JWT_TOKEN: 'test-token',
-        });
-
-        const initializeRequest = {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-          params: {
-            clientInfo: {
-              name: 'test-client',
-              version: '1.0.0',
-            },
-            _proxy_request_id: 1,
-          },
-        };
-        const toolRequest = {
-          jsonrpc: '2.0',
-          id: 2,
-          method: 'tools/list',
-          params: {
-            cursor: 'bad-cursor',
-          },
-        };
-
-        nock('https://my-wp-site.com')
-          .post(WP_MCP_ENDPOINT, initializeRequest)
-          .reply(200, createJsonRpcResult(1, { protocolVersion: '2025-06-18' }), {
-            'Mcp-Session-Id': 'session-1',
+      it.each([
+        ['invalid-params', -32602, 'Cursor is invalid'],
+        ['internal', -32603, 'Internal server error'],
+        ['internal session-not-found', -32603, 'Session not found'],
+      ])(
+        'should not refresh the session for an unrelated %s error',
+        async (_label, code, message) => {
+          restoreEnv = mockEnv({
+            WP_API_URL: 'https://my-wp-site.com',
+            JWT_TOKEN: 'test-token',
           });
 
-        nock('https://my-wp-site.com')
-          .post(WP_MCP_ENDPOINT, toolRequest)
-          .matchHeader('mcp-session-id', 'session-1')
-          .reply(200, createJsonRpcError(2, -32602, 'Cursor is invalid'));
+          const initializeRequest = {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              clientInfo: {
+                name: 'test-client',
+                version: '1.0.0',
+              },
+              _proxy_request_id: 1,
+            },
+          };
+          const toolRequest = {
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'tools/list',
+            params: {
+              cursor: 'bad-cursor',
+            },
+          };
 
-        const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+          nock('https://my-wp-site.com')
+            .post(WP_MCP_ENDPOINT, initializeRequest)
+            .reply(200, createJsonRpcResult(1, { protocolVersion: '2025-06-18' }), {
+              'Mcp-Session-Id': 'session-1',
+            });
 
-        await wpRequest(initializeRequest, true);
-        await expect(wpRequest(toolRequest, true)).rejects.toThrow(
-          'WordPress JSON-RPC error: Cursor is invalid'
-        );
+          nock('https://my-wp-site.com')
+            .post(WP_MCP_ENDPOINT, toolRequest)
+            .matchHeader('mcp-session-id', 'session-1')
+            .reply(200, createJsonRpcError(2, code, message));
 
-        expect(nock.isDone()).toBe(true);
-      });
+          const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+
+          await wpRequest(initializeRequest, true);
+          await expect(wpRequest(toolRequest, true)).rejects.toThrow(
+            `WordPress JSON-RPC error: ${message}`
+          );
+
+          expect(nock.isDone()).toBe(true);
+        }
+      );
 
       it('should not retry initialize requests when initialize itself returns an invalid session error', async () => {
         restoreEnv = mockEnv({

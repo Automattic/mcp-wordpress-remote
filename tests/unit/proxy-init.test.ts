@@ -72,4 +72,91 @@ describe('doInitializeProxy precedence', () => {
     expect(detectMacOs).toHaveBeenCalledTimes(1);
     expect(proxy.getProxyType()).toBe('none');
   });
+
+  it('refreshes proxy configuration after system settings change', async () => {
+    restoreEnv = mockEnv(NO_PROXY_ENV);
+
+    const proxy = await import('../../src/lib/proxy-utils.js');
+    await proxy.initializeProxy(() => ({ pacUrl: null, socks: null }));
+
+    expect(proxy.getProxyType()).toBe('none');
+
+    await proxy.refreshProxy(() => ({
+      pacUrl: null,
+      socks: { host: '127.0.0.1', port: '8080' },
+    }));
+
+    expect(proxy.getProxyType()).toBe('env');
+    const agent = await proxy.getAgentForUrl('https://example.com');
+    expect(agent?.constructor.name).toBe('SocksProxyAgent');
+  });
+
+  it('coalesces concurrent refreshes', async () => {
+    restoreEnv = mockEnv(NO_PROXY_ENV);
+
+    const proxy = await import('../../src/lib/proxy-utils.js');
+    await proxy.initializeProxy(() => ({ pacUrl: null, socks: null }));
+
+    const detectMacOs = jest.fn<() => MacOsProxyInfo | null>(() => ({
+      pacUrl: null,
+      socks: { host: '127.0.0.1', port: '8080' },
+    }));
+
+    await Promise.all([proxy.refreshProxy(detectMacOs), proxy.refreshProxy(detectMacOs)]);
+
+    expect(detectMacOs).toHaveBeenCalledTimes(1);
+    expect(proxy.getProxyType()).toBe('env');
+  });
+
+  it('allows later refreshes after another system proxy change', async () => {
+    restoreEnv = mockEnv(NO_PROXY_ENV);
+
+    const proxy = await import('../../src/lib/proxy-utils.js');
+    await proxy.initializeProxy(() => ({ pacUrl: null, socks: null }));
+
+    const detectMacOs = jest
+      .fn<() => MacOsProxyInfo | null>()
+      .mockReturnValueOnce({
+        pacUrl: null,
+        socks: { host: '127.0.0.1', port: '8080' },
+      })
+      .mockReturnValueOnce({ pacUrl: null, socks: null });
+
+    await proxy.refreshProxy(detectMacOs);
+    expect(proxy.getProxyType()).toBe('env');
+
+    await proxy.refreshProxy(detectMacOs);
+    expect(proxy.getProxyType()).toBe('none');
+    expect(detectMacOs).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds PAC initialization and swaps configuration only after it settles', async () => {
+    restoreEnv = mockEnv({ ...NO_PROXY_ENV, PROXY_PAC_TIMEOUT_MS: '20' });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(() => new Promise<Response>(() => {})) as typeof fetch;
+
+    try {
+      const proxy = await import('../../src/lib/proxy-utils.js');
+      await proxy.initializeProxy(() => ({
+        pacUrl: null,
+        socks: { host: '127.0.0.1', port: '8080' },
+      }));
+
+      const refresh = proxy.refreshProxy(() => ({
+        pacUrl: 'https://pac.example.com/proxy.pac',
+        socks: null,
+      }));
+
+      // Refresh waits for a complete replacement; the working configuration
+      // remains available while PAC loading is still pending.
+      expect(proxy.getProxyType()).toBe('env');
+
+      await refresh;
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(proxy.getProxyType()).toBe('none');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

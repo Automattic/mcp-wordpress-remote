@@ -44,6 +44,8 @@ export { MCP_WORDPRESS_REMOTE_VERSION } from './lib/utils.js';
 export {
   setupFetchPolyfill,
   proxyFetch,
+  ProxyFetchError,
+  isProxyFetchError,
   getProxyInfo,
   isFetchAvailable,
   getFetchInfo,
@@ -52,6 +54,7 @@ export {
 // Export proxy utilities
 export {
   initializeProxy,
+  refreshProxy,
   isProxyConfigured,
   getProxyType,
   getAgentForUrl,
@@ -60,3 +63,7 @@ export {
 // Export tool-call hooks (embedding packages can piggyback on the live session)
 export { registerToolCallHook } from './lib/tool-call-hooks.js';
 export type { ToolCallHook, ToolCallContext } from './lib/tool-call-hooks.js';
+
+// Export opt-in request recovery hooks for embedding packages.
+export { registerRequestRecoveryHook } from './lib/request-recovery-hooks.js';
+export type { RequestRecoveryHook, RequestRecoveryContext } from './lib/request-recovery-hooks.js';

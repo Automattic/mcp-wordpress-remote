@@ -7,6 +7,7 @@
 
 import type { RequestInit as NodeFetchRequestInit } from 'node-fetch';
 import type { Agent } from 'http';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 import { logger } from './utils.js';
 import { getConfig } from './config.js';
 import { initializeProxy, getAgentForUrl, isProxyConfigured, getProxyType } from './proxy-utils.js';
@@ -14,8 +15,65 @@ import { initializeProxy, getAgentForUrl, isProxyConfigured, getProxyType } from
 /**
  * Extended RequestInit that includes the agent property for proxy support
  */
-interface ProxyRequestInit extends NodeFetchRequestInit {
-  agent?: Agent;
+type ProxyRequestInit = NodeFetchRequestInit;
+
+/** A network failure from a fetch that actually selected a proxy agent. */
+export class ProxyFetchError extends Error {
+  public readonly cause: unknown;
+  public readonly code?: string;
+  public readonly redirected: boolean;
+
+  constructor(cause: unknown, code?: string, redirected: boolean = false) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'ProxyFetchError';
+    this.cause = cause;
+    this.code = code;
+    this.redirected = redirected;
+    Object.setPrototypeOf(this, ProxyFetchError.prototype);
+  }
+}
+
+export function isProxyFetchError(error: unknown): error is ProxyFetchError {
+  return error instanceof ProxyFetchError;
+}
+
+type NodeFetchImplementation = (url: string, init: ProxyRequestInit) => Promise<unknown>;
+
+/**
+ * Execute a request after a proxy agent has been selected, preserving that
+ * attribution if the network attempt fails.
+ *
+ * @internal Exported for focused unit coverage; not part of the package barrel.
+ */
+export async function fetchWithProxyAgent(
+  nodeFetch: NodeFetchImplementation,
+  url: string,
+  init: RequestInit | undefined,
+  agent: Agent
+): Promise<Response> {
+  // node-fetch invokes the agent selector for each hop, including redirects
+  // back to the same URL. A later refusal cannot prove the first hop was safe.
+  let hops = 0;
+  const selectAgent = () => {
+    hops++;
+    return agent;
+  };
+  try {
+    return (await nodeFetch(url, { ...init, agent: selectAgent } as ProxyRequestInit)) as Response;
+  } catch (error) {
+    // socks converts socket errors to message-only SocksClientErrors, so
+    // node-fetch cannot retain their code.
+    const failure = error as { type?: string; code?: string; message?: string };
+    const proxyHost = agent instanceof SocksProxyAgent ? agent.proxy.host : undefined;
+    const refused =
+      agent instanceof SocksProxyAgent &&
+      proxyHost !== undefined &&
+      failure?.type === 'system' &&
+      failure.code === undefined &&
+      failure.message ===
+        `request to ${new URL(url).href} failed, reason: connect ECONNREFUSED ${proxyHost}:${agent.proxy.port}`;
+    throw new ProxyFetchError(error, refused ? 'ECONNREFUSED' : undefined, hops > 1);
+  }
 }
 
 /**
@@ -74,7 +132,7 @@ export async function proxyFetch(url: string, init?: RequestInit): Promise<Respo
   if (agent) {
     // Use node-fetch with agent for SOCKS/HTTP proxy support
     const nodeFetch = (await import('node-fetch')).default;
-    return nodeFetch(url, { ...init, agent } as ProxyRequestInit) as unknown as Response;
+    return fetchWithProxyAgent(nodeFetch, url, init, agent);
   }
 
   // Direct connection (no proxy configured or PAC returned DIRECT)

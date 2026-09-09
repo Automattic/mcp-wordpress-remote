@@ -269,6 +269,7 @@ For WooCommerce-specific tools and reports:
 | `LOG_TO_STDERR`               | Mirror all log levels to stderr (errors always are) | `false`           | -                     |
 | `WP_API_TIMEOUT_MS`           | Request timeout for tool calls (ms)              | `120000`             | -                     |
 | `WP_API_INIT_TIMEOUT_MS`      | Timeout for the initialize handshake (ms)        | `25000`              | -                     |
+| `PROXY_PAC_TIMEOUT_MS`        | Timeout for PAC download and resolver setup (ms) | `5000`               | -                     |
 | **TLS / Certificates**        |                                                  |                      |                       |
 | `NODE_EXTRA_CA_CERTS`         | Path to an extra CA file to trust (mkcert/corporate CA) | -             | -                     |
 | `NODE_USE_SYSTEM_CA`          | Trust the OS certificate store (Node 22.15+)     | -                    | -                     |
