@@ -17,6 +17,15 @@ jest.unstable_mockModule('open', () => ({
   default: jest.fn().mockImplementation(() => Promise.resolve()),
 }));
 
+// Avoid binding a real socket in unit tests; performAuthorization() only
+// needs a server whose start()/stop() resolve.
+jest.unstable_mockModule('../../src/lib/oauth-callback-server.js', () => ({
+  setupWPOAuthCallbackServer: jest.fn(() => ({
+    start: jest.fn(async () => {}),
+    stop: jest.fn(async () => {}),
+  })),
+}));
+
 describe('MCPOAuthProvider client registration', () => {
   const origin = 'https://example.com';
   const serverUrl = `${origin}/`;
@@ -51,8 +60,13 @@ describe('MCPOAuthProvider client registration', () => {
 
   async function loadModules() {
     const { MCPOAuthProvider } = await import('../../src/lib/mcp-oauth-provider.js');
-    const { generateServerUrlHash, writeClientInfo, readClientInfo, ensureConfigDir, getConfigFilePath } =
-      await import('../../src/lib/persistent-auth-config.js');
+    const {
+      generateServerUrlHash,
+      writeClientInfo,
+      readClientInfo,
+      ensureConfigDir,
+      getConfigFilePath,
+    } = await import('../../src/lib/persistent-auth-config.js');
     return {
       MCPOAuthProvider,
       generateServerUrlHash,
@@ -108,12 +122,20 @@ describe('MCPOAuthProvider client registration', () => {
   });
 
   it('falls through to registration when stored client_info is corrupt (empty client_id)', async () => {
-    const { MCPOAuthProvider, generateServerUrlHash, readClientInfo, ensureConfigDir, getConfigFilePath } =
-      await loadModules();
+    const {
+      MCPOAuthProvider,
+      generateServerUrlHash,
+      readClientInfo,
+      ensureConfigDir,
+      getConfigFilePath,
+    } = await loadModules();
     await ensureConfigDir();
     const hash = generateServerUrlHash(serverUrl);
     // Structurally valid JSON but an unusable client_id — must not be promoted.
-    fsSync.writeFileSync(getConfigFilePath(hash, 'client_info.json'), JSON.stringify({ client_id: '' }));
+    fsSync.writeFileSync(
+      getConfigFilePath(hash, 'client_info.json'),
+      JSON.stringify({ client_id: '' })
+    );
 
     let registerCalls = 0;
     nock(origin)
@@ -159,5 +181,99 @@ describe('MCPOAuthProvider client registration', () => {
 
     expect(scope.isDone()).toBe(false);
     expect(provider.getConfig().clientId).toBe('env-client');
+  });
+
+  it('uses the selected callback port when exchanging the authorization code', async () => {
+    const { MCPOAuthProvider, generateServerUrlHash } = await loadModules();
+    const { writeTextFile } = await import('../../src/lib/persistent-auth-config.js');
+    const provider = new MCPOAuthProvider({
+      serverUrl,
+      clientId: 'dynamic-port-client',
+      scopes: ['read'],
+    });
+    (provider as any).config.tokenEndpoint = `${origin}/oauth/token`;
+
+    await writeTextFile(generateServerUrlHash(serverUrl), 'pkce_verifier.txt', 'a'.repeat(64));
+
+    const callback = 'http://127.0.0.1:49152/oauth/callback';
+    const exchange = nock(origin)
+      .post('/oauth/token', body => body.redirect_uri === callback)
+      .reply(200, { access_token: 'access-token', token_type: 'Bearer', expires_in: 3600 });
+
+    await (provider as any).exchangeCodeForTokens('authorization-code', callback);
+
+    expect(exchange.isDone()).toBe(true);
+  });
+
+  it('propagates the port selected during performAuthorization to the token exchange call', async () => {
+    const { MCPOAuthProvider } = await loadModules();
+    const { default: open } = await import('open');
+    const provider: any = new MCPOAuthProvider({
+      serverUrl,
+      clientId: 'dynamic-port-client',
+      scopes: ['read'],
+    });
+
+    // Discovery and the browser round-trip are covered by their own tests;
+    // stub them so this test isolates step 4 (port selection) through step 8
+    // (token exchange) of performAuthorization().
+    provider.discoverOAuthEndpoints = jest.fn().mockImplementation(async () => {
+      provider.config.authorizationEndpoint = `${origin}/oauth/authorize`;
+      provider.config.tokenEndpoint = `${origin}/oauth/token`;
+    });
+    provider.waitForAuthorizationCode = jest.fn(async () => 'authorization-code');
+
+    const exchangeSpy = jest
+      .spyOn(provider, 'exchangeCodeForTokens')
+      .mockResolvedValue({ access_token: 'access-token', token_type: 'Bearer', expires_in: 3600 });
+
+    const preSelectionRedirectUri = provider.config.redirectUri;
+
+    await provider.performAuthorization();
+
+    const authUrl = new URL((open as jest.Mock).mock.calls[0][0] as string);
+    const redirectUriSentToAuthServer = authUrl.searchParams.get('redirect_uri')!;
+
+    // Sanity check: dynamic selection actually produced a real port, not the
+    // pre-selection port-0 URI baked into the initial config.
+    expect(redirectUriSentToAuthServer).not.toBe(preSelectionRedirectUri);
+
+    // The real regression check: if performAuthorization ever reverts to
+    // calling exchangeCodeForTokens(authCode) without the selected URI, this
+    // fails because exchangeSpy receives the stale this.config.redirectUri
+    // instead of the URI actually presented to the authorization server.
+    expect(exchangeSpy).toHaveBeenCalledWith('authorization-code', redirectUriSentToAuthServer);
+  });
+
+  it('registers the dynamically selected callback port during client registration', async () => {
+    const { MCPOAuthProvider } = await loadModules();
+    const provider: any = new MCPOAuthProvider({ serverUrl, scopes: ['read'] });
+
+    provider.discoverOAuthEndpoints = jest.fn().mockImplementation(async () => {
+      provider.authServerMetadata = { registration_endpoint: registrationEndpoint };
+      provider.config.authorizationEndpoint = `${origin}/oauth/authorize`;
+      provider.config.tokenEndpoint = `${origin}/oauth/token`;
+    });
+    provider.waitForAuthorizationCode = jest.fn(async () => 'authorization-code');
+    jest
+      .spyOn(provider, 'exchangeCodeForTokens')
+      .mockResolvedValue({ access_token: 'access-token', token_type: 'Bearer', expires_in: 3600 });
+
+    const preSelectionRedirectUri = provider.config.redirectUri;
+    let registeredRedirectUri: string | undefined;
+    const registration = nock(origin)
+      .post(registrationPath, body => {
+        registeredRedirectUri = body.redirect_uris?.[0];
+        return true;
+      })
+      .reply(201, { client_id: 'dynamic-client' });
+
+    await provider.performAuthorization();
+
+    expect(registration.isDone()).toBe(true);
+    // Regression check: DCR must register the port actually selected for the
+    // callback server, not the port-0 placeholder computed before selection.
+    expect(registeredRedirectUri).not.toBe(preSelectionRedirectUri);
+    expect(registeredRedirectUri).toMatch(/:\d+\/oauth\/callback$/);
   });
 });

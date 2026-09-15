@@ -342,18 +342,10 @@ export class MCPOAuthProvider {
       // Step 1: Discover OAuth endpoints
       await this.discoverOAuthEndpoints();
 
-      // Step 2: Ensure we have a client ID (via registration if needed)
-      await this.ensureClientRegistration();
-
-      // Step 3: Generate PKCE parameters (required for OAuth 2.1)
-      this.currentPKCE = generatePKCE();
-      this.currentState = generateSecureState();
-
-      // Store PKCE verifier for later use
-      await writeTextFile(this.serverUrlHash, 'pkce_verifier.txt', this.currentPKCE.codeVerifier);
-      await writeTextFile(this.serverUrlHash, 'oauth_state.txt', this.currentState);
-
-      // Step 4: Set up callback server with smart port selection
+      // Step 2: Set up callback server with smart port selection. This must
+      // happen before client registration: DCR registers this.config.redirectUri
+      // as the client's allowed redirect, so registration needs the real
+      // selected port too, not the pre-selection port-0 placeholder.
       const callbackPort =
         this.config.callbackPort === 0 ? await getOAuthCallbackPort() : this.config.callbackPort;
 
@@ -372,6 +364,18 @@ export class MCPOAuthProvider {
 
       // Update redirect URI with the actual port used
       const actualRedirectUri = `http://${this.config.host}:${callbackPort}/oauth/callback`;
+      this.config.redirectUri = actualRedirectUri;
+
+      // Step 3: Ensure we have a client ID (via registration if needed)
+      await this.ensureClientRegistration();
+
+      // Step 4: Generate PKCE parameters (required for OAuth 2.1)
+      this.currentPKCE = generatePKCE();
+      this.currentState = generateSecureState();
+
+      // Store PKCE verifier for later use
+      await writeTextFile(this.serverUrlHash, 'pkce_verifier.txt', this.currentPKCE.codeVerifier);
+      await writeTextFile(this.serverUrlHash, 'oauth_state.txt', this.currentState);
 
       // Step 5: Build authorization URL with all required parameters
       const authUrl = buildAuthorizationUrl(
@@ -403,7 +407,7 @@ export class MCPOAuthProvider {
       const authCode = await this.waitForAuthorizationCode();
 
       // Step 8: Exchange authorization code for access token
-      const tokens = await this.exchangeCodeForTokens(authCode);
+      const tokens = await this.exchangeCodeForTokens(authCode, actualRedirectUri);
 
       // Step 9: Store tokens
       await writeTokens(this.serverUrlHash, tokens);
@@ -456,7 +460,10 @@ export class MCPOAuthProvider {
   /**
    * Exchange authorization code for access tokens
    */
-  private async exchangeCodeForTokens(code: string): Promise<WPTokens> {
+  private async exchangeCodeForTokens(
+    code: string,
+    redirectUri = this.config.redirectUri
+  ): Promise<WPTokens> {
     try {
       const codeVerifier = await readTextFile(
         this.serverUrlHash,
@@ -467,7 +474,7 @@ export class MCPOAuthProvider {
       const tokenResponse = await exchangeAuthorizationCode(
         this.config.tokenEndpoint!,
         code,
-        this.config.redirectUri,
+        redirectUri,
         this.config.clientId!,
         codeVerifier,
         CONFIG.OAUTH_RESOURCE_INDICATOR ? this.config.resource : undefined
