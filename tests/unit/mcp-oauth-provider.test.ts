@@ -227,6 +227,8 @@ describe('MCPOAuthProvider client registration', () => {
       .spyOn(provider, 'exchangeCodeForTokens')
       .mockResolvedValue({ access_token: 'access-token', token_type: 'Bearer', expires_in: 3600 });
 
+    const preSelectionRedirectUri = provider.config.redirectUri;
+
     await provider.performAuthorization();
 
     const authUrl = new URL((open as jest.Mock).mock.calls[0][0] as string);
@@ -234,12 +236,44 @@ describe('MCPOAuthProvider client registration', () => {
 
     // Sanity check: dynamic selection actually produced a real port, not the
     // pre-selection port-0 URI baked into the initial config.
-    expect(redirectUriSentToAuthServer).not.toBe(provider.config.redirectUri);
+    expect(redirectUriSentToAuthServer).not.toBe(preSelectionRedirectUri);
 
     // The real regression check: if performAuthorization ever reverts to
     // calling exchangeCodeForTokens(authCode) without the selected URI, this
     // fails because exchangeSpy receives the stale this.config.redirectUri
     // instead of the URI actually presented to the authorization server.
     expect(exchangeSpy).toHaveBeenCalledWith('authorization-code', redirectUriSentToAuthServer);
+  });
+
+  it('registers the dynamically selected callback port during client registration', async () => {
+    const { MCPOAuthProvider } = await loadModules();
+    const provider: any = new MCPOAuthProvider({ serverUrl, scopes: ['read'] });
+
+    provider.discoverOAuthEndpoints = jest.fn().mockImplementation(async () => {
+      provider.authServerMetadata = { registration_endpoint: registrationEndpoint };
+      provider.config.authorizationEndpoint = `${origin}/oauth/authorize`;
+      provider.config.tokenEndpoint = `${origin}/oauth/token`;
+    });
+    provider.waitForAuthorizationCode = jest.fn(async () => 'authorization-code');
+    jest
+      .spyOn(provider, 'exchangeCodeForTokens')
+      .mockResolvedValue({ access_token: 'access-token', token_type: 'Bearer', expires_in: 3600 });
+
+    const preSelectionRedirectUri = provider.config.redirectUri;
+    let registeredRedirectUri: string | undefined;
+    const registration = nock(origin)
+      .post(registrationPath, body => {
+        registeredRedirectUri = body.redirect_uris?.[0];
+        return true;
+      })
+      .reply(201, { client_id: 'dynamic-client' });
+
+    await provider.performAuthorization();
+
+    expect(registration.isDone()).toBe(true);
+    // Regression check: DCR must register the port actually selected for the
+    // callback server, not the port-0 placeholder computed before selection.
+    expect(registeredRedirectUri).not.toBe(preSelectionRedirectUri);
+    expect(registeredRedirectUri).toMatch(/:\d+\/oauth\/callback$/);
   });
 });
