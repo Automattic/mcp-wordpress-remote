@@ -260,6 +260,7 @@ For WooCommerce-specific tools and reports:
 | `OAUTH_ENABLED`               | Enable OAuth authentication                      | `false`               | -                     |
 | `OAUTH_CALLBACK_PORT`         | OAuth callback port                              | `7665`               | -                     |
 | `OAUTH_HOST`                  | OAuth callback hostname                          | `127.0.0.1`          | -                     |
+| `OAUTH_TIMEOUT_MS`            | Time to wait for the browser OAuth login (ms)    | `30000`              | -                     |
 | `WP_OAUTH_CLIENT_ID`          | Custom OAuth client ID                           | -                    | -                     |
 | **OAuth Endpoints**           |                                                  |                      |                       |
 | `OAUTH_AUTHORIZE_ENDPOINT`    | OAuth authorization endpoint                     | -                    | ✅ (for custom OAuth) |

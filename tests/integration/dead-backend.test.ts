@@ -16,6 +16,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { once } from 'events';
 import { join } from 'path';
+import tmp from 'tmp';
 import { InitializeResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const PROXY_PATH = process.env.PROXY_TEST_PATH || join(process.cwd(), 'dist/proxy.js');
@@ -178,6 +179,7 @@ describe('dead backend integration', () => {
 
   it('returns the structured fallback when headless implicit OAuth has no callback', async () => {
     const oauthTimeout = 100;
+    const configDir = tmp.dirSync({ unsafeCleanup: true });
     proxy = spawn('node', [PROXY_PATH], {
       env: {
         ...process.env,
@@ -188,7 +190,7 @@ describe('dead backend integration', () => {
         OAUTH_AUTHORIZE_ENDPOINT: '/authorize',
         OAUTH_TIMEOUT_MS: String(oauthTimeout),
         OAUTH_CALLBACK_PORT: String(20_000 + Math.floor(Math.random() * 10_000)),
-        WP_MCP_CONFIG_DIR: join(process.cwd(), '.tmp-implicit-oauth-auth'),
+        WP_MCP_CONFIG_DIR: configDir.name,
         LOG_LEVEL: '0',
         NODE_ENV: 'test',
       },
@@ -216,6 +218,8 @@ describe('dead backend integration', () => {
       experimental: { connectionFailed: expect.any(Object) },
     });
     expect(initResponse.result.instructions).toMatch(/Connection Failed/i);
+
+    configDir.removeCallback();
   }, 5_000);
 
   // Healthy and streaming endpoints are exercised in pass-through.test.ts.
