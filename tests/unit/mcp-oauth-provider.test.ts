@@ -11,6 +11,17 @@ import nock from 'nock';
 import tmp from 'tmp';
 import fsSync from 'fs';
 import { mockEnv } from '../utils/test-helpers.js';
+import { createServer } from 'node:net';
+
+const getFreePort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as { port: number };
+      probe.close(() => resolve(port));
+    });
+  });
 
 // Avoid ESM issues by stubbing the browser-opening dependency.
 jest.unstable_mockModule('open', () => ({
@@ -275,5 +286,26 @@ describe('MCPOAuthProvider client registration', () => {
     // callback server, not the port-0 placeholder computed before selection.
     expect(registeredRedirectUri).not.toBe(preSelectionRedirectUri);
     expect(registeredRedirectUri).toMatch(/:\d+\/oauth\/callback$/);
+  });
+
+  it('releases the callback port when registration fails, so a retry can start again', async () => {
+    const { MCPOAuthProvider } = await loadModules();
+    const provider: any = new MCPOAuthProvider({ serverUrl, scopes: ['read'] });
+    provider.config.callbackPort = await getFreePort();
+
+    provider.discoverOAuthEndpoints = jest.fn().mockImplementation(async () => {
+      provider.authServerMetadata = { registration_endpoint: registrationEndpoint };
+      provider.config.authorizationEndpoint = `${origin}/oauth/authorize`;
+      provider.config.tokenEndpoint = `${origin}/oauth/token`;
+    });
+    nock(origin).post(registrationPath).times(2).reply(500, { error: 'server_error' });
+
+    // Both attempts must fail on registration; a leaked server would make the
+    // second one fail with EADDRINUSE instead.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const error = await provider.performAuthorization().catch((e: unknown) => e);
+      expect(String((error as Error).message)).not.toMatch(/EADDRINUSE/);
+      expect(String((error as Error).message)).toMatch(/500|server_error|registration/i);
+    }
   });
 });

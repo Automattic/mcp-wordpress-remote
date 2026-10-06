@@ -362,59 +362,63 @@ export class MCPOAuthProvider {
       await callbackServer.start();
       logger.oauth('OAuth callback server started');
 
-      // Update redirect URI with the actual port used
-      const actualRedirectUri = `http://${this.config.host}:${callbackPort}/oauth/callback`;
-      this.config.redirectUri = actualRedirectUri;
-
-      // Step 3: Ensure we have a client ID (via registration if needed)
-      await this.ensureClientRegistration();
-
-      // Step 4: Generate PKCE parameters (required for OAuth 2.1)
-      this.currentPKCE = generatePKCE();
-      this.currentState = generateSecureState();
-
-      // Store PKCE verifier for later use
-      await writeTextFile(this.serverUrlHash, 'pkce_verifier.txt', this.currentPKCE.codeVerifier);
-      await writeTextFile(this.serverUrlHash, 'oauth_state.txt', this.currentState);
-
-      // Step 5: Build authorization URL with all required parameters
-      const authUrl = buildAuthorizationUrl(
-        this.config.authorizationEndpoint!,
-        this.config.clientId!,
-        actualRedirectUri,
-        this.config.scopes,
-        this.currentState,
-        this.currentPKCE.codeChallenge,
-        CONFIG.OAUTH_RESOURCE_INDICATOR ? this.config.resource : undefined
-      );
-
-      logger.oauth('Built OAuth 2.1 authorization URL');
-      logger.debug('Authorization URL', 'OAUTH', { url: authUrl });
-
-      // Step 6: Open browser for user authorization
+      // Always release the callback port, so a failed attempt does not block the next one.
       try {
-        await open(authUrl);
-        logger.oauth('Browser opened successfully');
-      } catch (browserError) {
-        logger.error('Failed to open browser automatically', 'OAUTH', browserError);
-        logger.info('\n=== MANUAL ACTION REQUIRED ===');
-        logger.info('Please manually open the following URL in your browser:');
-        logger.info(`${authUrl}`);
-        logger.info('===============================\n');
+        // Update redirect URI with the actual port used
+        const actualRedirectUri = `http://${this.config.host}:${callbackPort}/oauth/callback`;
+        this.config.redirectUri = actualRedirectUri;
+
+        // Step 3: Ensure we have a client ID (via registration if needed)
+        await this.ensureClientRegistration();
+
+        // Step 4: Generate PKCE parameters (required for OAuth 2.1)
+        this.currentPKCE = generatePKCE();
+        this.currentState = generateSecureState();
+
+        // Store PKCE verifier for later use
+        await writeTextFile(this.serverUrlHash, 'pkce_verifier.txt', this.currentPKCE.codeVerifier);
+        await writeTextFile(this.serverUrlHash, 'oauth_state.txt', this.currentState);
+
+        // Step 5: Build authorization URL with all required parameters
+        const authUrl = buildAuthorizationUrl(
+          this.config.authorizationEndpoint!,
+          this.config.clientId!,
+          actualRedirectUri,
+          this.config.scopes,
+          this.currentState,
+          this.currentPKCE.codeChallenge,
+          CONFIG.OAUTH_RESOURCE_INDICATOR ? this.config.resource : undefined
+        );
+
+        logger.oauth('Built OAuth 2.1 authorization URL');
+        logger.debug('Authorization URL', 'OAUTH', { url: authUrl });
+
+        // Step 6: Open browser for user authorization
+        try {
+          await open(authUrl);
+          logger.oauth('Browser opened successfully');
+        } catch (browserError) {
+          logger.error('Failed to open browser automatically', 'OAUTH', browserError);
+          logger.info('\n=== MANUAL ACTION REQUIRED ===');
+          logger.info('Please manually open the following URL in your browser:');
+          logger.info(`${authUrl}`);
+          logger.info('===============================\n');
+        }
+
+        // Step 7: Wait for authorization code
+        const authCode = await this.waitForAuthorizationCode();
+
+        // Step 8: Exchange authorization code for access token
+        const tokens = await this.exchangeCodeForTokens(authCode, actualRedirectUri);
+
+        // Step 9: Store tokens
+        await writeTokens(this.serverUrlHash, tokens);
+        logger.oauth('OAuth 2.1 tokens stored successfully');
+
+        return tokens;
+      } finally {
+        await callbackServer.stop();
       }
-
-      // Step 7: Wait for authorization code
-      const authCode = await this.waitForAuthorizationCode();
-
-      // Step 8: Exchange authorization code for access token
-      const tokens = await this.exchangeCodeForTokens(authCode, actualRedirectUri);
-
-      // Step 9: Store tokens
-      await writeTokens(this.serverUrlHash, tokens);
-      logger.oauth('OAuth 2.1 tokens stored successfully');
-
-      await callbackServer.stop();
-      return tokens;
     } catch (error) {
       logger.error('Error during OAuth 2.1 authorization flow', 'OAUTH', error);
       throw error;
