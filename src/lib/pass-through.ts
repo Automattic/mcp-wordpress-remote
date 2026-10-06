@@ -6,7 +6,12 @@ import { APIError } from './oauth-types.js';
 import { apiErrorToMcpError, describeConnectionError } from './error-utils.js';
 import { runToolCallHooks } from './tool-call-hooks.js';
 import { bindWordPressRequest, setWordPressSession } from './wordpress-api.js';
-import { PROTOCOL_VERSION_META, WordPressTransport } from './wordpress-transport.js';
+import {
+  CLIENT_INFO_META,
+  PROTOCOL_VERSION_META,
+  WordPressTransport,
+} from './wordpress-transport.js';
+import { setClientInfo } from './fetch-utils.js';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger } from './utils.js';
 
@@ -191,6 +196,14 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
   remote.onerror = error => logger.error('WordPress transport error', 'PROXY', error);
   local.onerror = error => logger.error('Client transport error', 'PROXY', error);
   local.onmessage = message => {
+    // 2025 clients identify themselves on initialize, 2026 clients on every request.
+    if ('method' in message) {
+      setClientInfo(
+        message.method === 'initialize'
+          ? message.params?.clientInfo
+          : message.params?._meta?.[CLIENT_INFO_META]
+      );
+    }
     void send(message).catch(error => fail(message, error));
   };
   const close = async () => {
