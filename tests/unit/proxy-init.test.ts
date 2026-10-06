@@ -72,4 +72,23 @@ describe('doInitializeProxy precedence', () => {
     expect(detectMacOs).toHaveBeenCalledTimes(1);
     expect(proxy.getProxyType()).toBe('none');
   });
+
+  it('falls back to the system SOCKS proxy when the PAC download does not finish in time', async () => {
+    restoreEnv = mockEnv({ ...NO_PROXY_ENV, PROXY_PAC_TIMEOUT_MS: '20' });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn(() => new Promise<Response>(() => {})) as typeof fetch;
+
+    try {
+      const proxy = await import('../../src/lib/proxy-utils.js');
+      await proxy.initializeProxy(() => ({
+        pacUrl: 'https://pac.example.com/proxy.pac',
+        socks: { host: '127.0.0.1', port: '8080' },
+      }));
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(proxy.getProxyType()).toBe('env');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

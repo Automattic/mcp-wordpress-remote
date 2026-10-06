@@ -23,6 +23,8 @@ interface ProxyConfig {
   envProxy?: { url: string; type: 'socks' | 'http' };
 }
 
+const DEFAULT_PAC_LOAD_TIMEOUT_MS = 5000;
+
 let proxyConfig: ProxyConfig = { type: 'none' };
 let initializationPromise: Promise<void> | null = null;
 
@@ -171,6 +173,51 @@ export async function initializeProxy(
   return initializationPromise;
 }
 
+function getPacLoadTimeoutMs(): number {
+  const configured = parseInt(process.env.PROXY_PAC_TIMEOUT_MS || '', 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_PAC_LOAD_TIMEOUT_MS;
+}
+
+async function loadPacResolver(pacUrl: string, signal: AbortSignal): Promise<PacResolverFn> {
+  // Fetch PAC file directly (not through proxy)
+  const response = await fetch(pacUrl, { signal });
+  if (!response.ok) {
+    throw new Error(`PAC request failed with HTTP ${response.status}`);
+  }
+  const pacScript = await response.text();
+
+  // Dynamic import for PAC resolver (has WASM dependencies)
+  const { getQuickJS } = await import('@tootallnate/quickjs-emscripten');
+  const { createPacResolver } = await import('pac-resolver');
+  const qjs = await getQuickJS();
+  return createPacResolver(qjs, pacScript);
+}
+
+/**
+ * Load the PAC resolver within PROXY_PAC_TIMEOUT_MS, so an unreachable PAC URL
+ * cannot stall startup. On timeout the caller falls back to the next proxy source.
+ */
+async function loadPacResolverWithTimeout(pacUrl: string): Promise<PacResolverFn> {
+  const timeoutMs = getPacLoadTimeoutMs();
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`PAC initialization timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([loadPacResolver(pacUrl, controller.signal), timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 /**
  * Internal initialization logic
  */
@@ -198,17 +245,7 @@ async function doInitializeProxy(detectMacOs: MacOsProxyDetector): Promise<void>
   // 2a. PAC file
   if (macProxy?.pacUrl) {
     try {
-      // Fetch PAC file directly (not through proxy)
-      const response = await fetch(macProxy.pacUrl);
-      const pacScript = await response.text();
-
-      // Dynamic import for PAC resolver (has WASM dependencies)
-      const { getQuickJS } = await import('@tootallnate/quickjs-emscripten');
-      const { createPacResolver } = await import('pac-resolver');
-
-      // Initialize QuickJS for PAC evaluation
-      const qjs = await getQuickJS();
-      const resolver = createPacResolver(qjs, pacScript);
+      const resolver = await loadPacResolverWithTimeout(macProxy.pacUrl);
 
       proxyConfig = {
         type: 'pac',
