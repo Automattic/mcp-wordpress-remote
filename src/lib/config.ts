@@ -59,7 +59,7 @@ export const CONFIG = {
   OAUTH_SCOPES: process.env.OAUTH_SCOPES || '',
 
   // Timeout Configuration (in milliseconds)
-  OAUTH_TIMEOUT: 30000, // 30 seconds
+  OAUTH_TIMEOUT: parsePositiveIntEnv(process.env.OAUTH_TIMEOUT_MS, 30000), // 30 seconds
   LOCK_TIMEOUT: 300000, // 5 minutes
 
   // WordPress request timeouts. Native fetch has no default timeout, so a

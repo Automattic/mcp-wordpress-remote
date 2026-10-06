@@ -324,7 +324,7 @@ export class PersistentWPOAuthClientProvider {
       const timeout = setTimeout(() => {
         cleanup();
         reject(new OAuthError('Authorization timeout', 'TIMEOUT'));
-      }, CONFIG.LOCK_TIMEOUT);
+      }, this.options.timeout);
 
       const cleanup = () => {
         this.events.removeAllListeners('oauth-success');
