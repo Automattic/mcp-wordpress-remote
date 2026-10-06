@@ -351,6 +351,73 @@ describe('built proxy pass-through', () => {
     expect(received[1].headers['mcp-protocol-version']).toBe('2099-02-03');
   });
 
+  it('mirrors x-mcp-header tool arguments into Mcp-Param headers on 2026 tool calls', async () => {
+    const meta = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' };
+    const tool = {
+      name: 'query',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          region: { type: 'string', 'x-mcp-header': 'Region' },
+          options: {
+            type: 'object',
+            properties: {
+              limit: { type: 'integer', 'x-mcp-header': 'Limit' },
+              label: { type: 'string', 'x-mcp-header': 'Label' },
+            },
+          },
+          absent: { type: 'boolean', 'x-mcp-header': 'Absent' },
+        },
+      },
+    };
+    respond = (_req, res, message) =>
+      json(res, {
+        jsonrpc: '2.0',
+        id: message.id,
+        result: message.method === 'tools/list' ? { tools: [tool] } : { content: [] },
+      });
+    await client.request(0, 'tools/list', { _meta: meta });
+    await client.request(1, 'tools/call', {
+      name: 'query',
+      arguments: { region: 'us-west1', options: { limit: 42, label: 'café' } },
+      _meta: meta,
+    });
+    const headers = received[1].headers;
+    expect(headers['mcp-name']).toBe('query');
+    expect(headers['mcp-param-region']).toBe('us-west1');
+    expect(headers['mcp-param-limit']).toBe('42');
+    expect(headers['mcp-param-label']).toBe('=?base64?Y2Fmw6k=?=');
+    expect(headers['mcp-param-absent']).toBeUndefined();
+    expect(received[0].headers['mcp-name']).toBeUndefined();
+  });
+
+  it('cancels a 2026 request by closing its stream instead of forwarding notifications/cancelled', async () => {
+    const meta = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' };
+    const closed = new Promise<void>(resolve => {
+      respond = (_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write(': open\n\n');
+        res.on('close', () => resolve());
+      };
+    });
+    client.send({
+      jsonrpc: '2.0',
+      id: 'slow',
+      method: 'tools/call',
+      params: { name: 'slow', arguments: {}, _meta: meta },
+    });
+    while (received.length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+    client.send({
+      jsonrpc: '2.0',
+      method: 'notifications/cancelled',
+      params: { requestId: 'slow', _meta: meta },
+    });
+    await closed;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(received.map(entry => entry.message.method)).toEqual(['tools/call']);
+    expect(client.stderr).not.toMatch(/timed out/);
+  });
+
   it('preserves the 2026 native elicitation result and continuation fields', async () => {
     const question = {
       resultType: 'input_required',

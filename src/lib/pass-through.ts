@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { JSONRPCMessage, JSONRPCRequest, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
@@ -7,7 +6,7 @@ import { APIError } from './oauth-types.js';
 import { apiErrorToMcpError, describeConnectionError } from './error-utils.js';
 import { runToolCallHooks } from './tool-call-hooks.js';
 import { bindWordPressRequest, setWordPressSession } from './wordpress-api.js';
-import { PROTOCOL_VERSION_META } from './wordpress-transport.js';
+import { PROTOCOL_VERSION_META, WordPressTransport } from './wordpress-transport.js';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger } from './utils.js';
 
@@ -19,12 +18,15 @@ type Pending = {
 
 const asRequest = (message: JSONRPCMessage | undefined): JSONRPCRequest | undefined =>
   message && 'method' in message && 'id' in message ? message : undefined;
+/** 2026 stateless requests carry their protocol version in `_meta`. */
+const isStateless = (message: JSONRPCMessage): boolean =>
+  'method' in message && typeof message.params?._meta?.[PROTOCOL_VERSION_META] === 'string';
 
 /**
  * Forward messages; only observe initialization and correlate optional hook requests.
  * Request deadlines are owned by the WordPress transport, which reports them via `fail`.
  */
-export async function startPassThrough(local: Transport, remote: StreamableHTTPClientTransport) {
+export async function startPassThrough(local: Transport, remote: WordPressTransport) {
   const pending = new Map<string | number, Pending>();
   let initializeId: string | number | undefined;
   let init: Promise<void> | undefined;
@@ -99,17 +101,24 @@ export async function startPassThrough(local: Transport, remote: StreamableHTTPC
 
   async function send(message: JSONRPCMessage, callbacks?: Pick<Pending, 'resolve' | 'reject'>) {
     const request = asRequest(message);
+    // 2026 HTTP has no client notifications: cancelling means closing the request's stream.
+    if (!request && 'method' in message && message.method === 'notifications/cancelled') {
+      const id = message.params?.requestId;
+      const entry = typeof id === 'string' || typeof id === 'number' ? pending.get(id) : undefined;
+      if (entry && isStateless(entry.request)) {
+        finish(entry.request.id);
+        remote.cancelRequest(entry.request.id);
+        return;
+      }
+    }
     if (request?.method === 'initialize') {
       initializeId = request.id;
       initError = undefined;
       init = new Promise<void>(resolve => {
         settleInit = resolve;
       });
-    } else if (
-      'method' in message &&
-      // 2026 stateless requests carry their version and never wait on a legacy initialize.
-      typeof message.params?._meta?.[PROTOCOL_VERSION_META] !== 'string'
-    ) {
+    } else if ('method' in message && !isStateless(message)) {
+      // 2026 stateless requests never wait on a legacy initialize.
       await init;
       if (initError) {
         if (request) {
@@ -163,6 +172,10 @@ export async function startPassThrough(local: Transport, remote: StreamableHTTPC
       } else if ('error' in message) initError = new Error(message.error.message);
       logger.debug('Upstream initialization settled', 'PROXY');
       settleInit?.();
+    }
+    if (entry?.request.method === 'tools/list' && 'result' in message) {
+      const { tools } = message.result;
+      if (Array.isArray(tools)) remote.rememberTools(tools);
     }
     if (entry?.resolve) {
       if ('result' in message) entry.resolve(message.result);

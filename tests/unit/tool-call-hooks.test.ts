@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { WordPressTransport } from '../../src/lib/wordpress-transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 // Transport seam: exercise the real bridge and registry, without repeating HTTP tests.
@@ -8,7 +8,7 @@ describe('tool-call hooks', () => {
   let unregister: Array<() => void>;
   let close: () => Promise<void>;
   let local: Transport;
-  let remote: StreamableHTTPClientTransport;
+  let remote: WordPressTransport;
   let register: typeof import('../../src/lib/tool-call-hooks.js').registerToolCallHook;
   let requests: JSONRPCMessage[];
   let output: JSONRPCMessage[];
@@ -33,13 +33,15 @@ describe('tool-call hooks', () => {
       start: async () => {},
       close: async () => {},
       setProtocolVersion: () => {},
+      cancelRequest: () => {},
+      rememberTools: () => {},
       send: async (message: JSONRPCMessage) => {
         requests.push(message);
         if ('method' in message && 'id' in message) {
           remote.onmessage?.({ jsonrpc: '2.0', id: message.id, result: response });
         }
       },
-    } as unknown as StreamableHTTPClientTransport;
+    } as unknown as WordPressTransport;
     ({ close } = await (
       await import('../../src/lib/pass-through.js')
     ).startPassThrough(local, remote));
