@@ -91,7 +91,7 @@ export const CONFIG = {
   NODE_ENV: process.env.NODE_ENV || 'development',
 
   // Proxy Configuration
-  USE_SYSTEM_PROXY: process.env.USE_SYSTEM_PROXY === 'true', // Enable system proxy detection (PAC files, env vars)
+  USE_SYSTEM_PROXY: process.env.USE_SYSTEM_PROXY === 'true', // Enable macOS system proxy detection (PAC file, system SOCKS)
 } as const;
 
 /**

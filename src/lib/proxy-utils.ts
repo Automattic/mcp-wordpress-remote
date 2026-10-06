@@ -2,14 +2,15 @@
  * Cross-platform proxy utilities for MCP WordPress Remote
  *
  * Supports:
- * - macOS: Automatic PAC file detection from system proxy settings
- * - macOS: System SOCKS proxy detection (manual "tunnel all traffic" config)
- * - All platforms: Environment variables (SOCKS_PROXY, HTTPS_PROXY, etc.)
+ * - All platforms: Environment variables (SOCKS_PROXY, HTTPS_PROXY, etc.), always
+ * - macOS, with USE_SYSTEM_PROXY=true: PAC file from system proxy settings
+ * - macOS, with USE_SYSTEM_PROXY=true: System SOCKS proxy ("tunnel all traffic")
  */
 
 import { execSync } from 'child_process';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import { getConfig } from './config.js';
 import { logger } from './utils.js';
 
 // Dynamic imports for PAC resolver (has WASM dependencies)
@@ -239,7 +240,14 @@ async function doInitializeProxy(detectMacOs: MacOsProxyDetector): Promise<void>
     return;
   }
 
-  // 2. Try macOS system proxy (single scutil call for both PAC and SOCKS)
+  // 2. Try macOS system proxy (single scutil call for both PAC and SOCKS),
+  //    only when the operator opted into system proxy detection.
+  if (!getConfig().useSystemProxy) {
+    logger.debug('No proxy configured (system proxy detection disabled)', 'PROXY');
+    proxyConfig = { type: 'none' };
+    return;
+  }
+
   const macProxy = detectMacOs();
 
   // 2a. PAC file
