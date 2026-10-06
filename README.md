@@ -43,7 +43,7 @@ Use the proxy when one of these applies:
 
 1. **Your client only supports stdio.** It can launch a local command but cannot connect to an HTTP MCP server.
 2. **Your client can't authenticate the way your site requires.** The proxy can send application passwords, JWT tokens, WooCommerce keys, or [custom headers](#custom-headers), and it can run the [OAuth flow](#authentication-methods) and store tokens for clients that can't.
-3. **Your traffic must go through a corporate proxy or PAC file.** Set `USE_SYSTEM_PROXY=true` to route requests through the system proxy settings.
+3. **Your traffic must go through a proxy.** Set `SOCKS_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` or `HTTP_PROXY` to route requests through it. On macOS, set `USE_SYSTEM_PROXY=true` to use the system PAC file or SOCKS proxy instead.
 4. **Your site is slow or unreliable.** `WP_API_TIMEOUT_MS` and `WP_API_INIT_TIMEOUT_MS` set the timeouts, and a failed initialize returns a degraded response instead of a broken connection (see [Forwarding behavior](#forwarding-behavior)).
 5. **You need a local record of the connection.** `LOG_FILE` with `LOG_LEVEL=3` logs each forwarded method plus connection and authentication events (see [Log Analysis](#log-analysis)).
 6. **You are building a packaged integration.** Tool-call hooks from the `/lib` bundle can send extra requests over the proxy's authenticated connection, for example for usage telemetry.
@@ -308,6 +308,13 @@ For WooCommerce-specific tools and reports:
 | `WP_API_TIMEOUT_MS`           | Request timeout for tool calls (ms)              | `120000`             | -                     |
 | `WP_API_INIT_TIMEOUT_MS`      | Initialize timeout (ms), after OAuth login       | `25000`              | -                     |
 | `PROXY_PAC_TIMEOUT_MS`        | Timeout for PAC download and resolver setup (ms) | `5000`               | -                     |
+| **Network Proxy**             |                                                  |                      |                       |
+| `SOCKS_PROXY`                 | SOCKS proxy URL (`socks5h://` resolves DNS on the proxy) | -            | -                     |
+| `HTTPS_PROXY`                 | HTTP(S) proxy URL, used when `SOCKS_PROXY` is unset | -                 | -                     |
+| `ALL_PROXY`                   | Proxy URL, used when the above are unset         | -                    | -                     |
+| `HTTP_PROXY`                  | Proxy URL, used when the above are unset         | -                    | -                     |
+| `NO_PROXY`                    | Comma-separated hosts that bypass the proxy      | -                    | -                     |
+| `USE_SYSTEM_PROXY`            | Also detect the macOS system PAC file or SOCKS proxy when no proxy URL is set | `false` | -          |
 | **TLS / Certificates**        |                                                  |                      |                       |
 | `NODE_EXTRA_CA_CERTS`         | Path to an extra CA file to trust (mkcert/corporate CA) | -             | -                     |
 | `NODE_USE_SYSTEM_CA`          | Trust the OS certificate store (Node 22.15+)     | -                    | -                     |

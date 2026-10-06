@@ -8,7 +8,7 @@
 import type { RequestInit as NodeFetchRequestInit } from 'node-fetch';
 import type { Agent } from 'http';
 import { logger } from './utils.js';
-import { getConfig, MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
+import { MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
 import { initializeProxy, getAgentForUrl, isProxyConfigured, getProxyType } from './proxy-utils.js';
 
 const PROXY_PRODUCT = `mcp-wordpress-remote/${MCP_WORDPRESS_REMOTE_VERSION}`;
@@ -69,20 +69,16 @@ export async function setupFetchPolyfill(): Promise<void> {
     logger.info('Using native fetch API', 'SYSTEM');
   }
 
-  // Initialize proxy support if enabled (PAC file on macOS, env vars on all platforms)
-  if (getConfig().useSystemProxy) {
-    await initializeProxy();
-  } else {
-    logger.debug('System proxy support disabled (USE_SYSTEM_PROXY=false)', 'PROXY');
-  }
+  // Env proxies always apply; USE_SYSTEM_PROXY adds macOS PAC and system SOCKS detection
+  await initializeProxy();
 }
 
 /**
  * Proxy-aware fetch that routes requests through system proxies when configured
  *
- * On macOS: Evaluates PAC file from system proxy settings to determine proxy per-URL
- * On Linux/other: Uses SOCKS_PROXY, HTTPS_PROXY, etc. environment variables
- * Falls back to direct connection if no proxy is configured or USE_SYSTEM_PROXY=false
+ * Uses SOCKS_PROXY, HTTPS_PROXY, ALL_PROXY or HTTP_PROXY when set
+ * With USE_SYSTEM_PROXY=true on macOS: Evaluates the system PAC file or SOCKS proxy
+ * Falls back to direct connection if no proxy is configured or NO_PROXY matches
  *
  * @param url - The URL to fetch
  * @param init - Optional fetch init options
@@ -96,11 +92,6 @@ export async function proxyFetch(url: string, init?: RequestInit): Promise<Respo
     headers.set('User-Agent', clientProduct ? `${clientProduct} ${PROXY_PRODUCT}` : PROXY_PRODUCT);
   }
   init = { ...init, headers };
-
-  // Skip proxy lookup if system proxy is disabled
-  if (!getConfig().useSystemProxy) {
-    return fetch(url, init);
-  }
 
   const agent = await getAgentForUrl(url);
 
