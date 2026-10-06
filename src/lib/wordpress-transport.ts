@@ -10,6 +10,8 @@ import { extractNetworkErrorCode, extractNetworkErrorMessage } from './error-uti
 
 /** Request `_meta` key that carries the protocol version on 2026 stateless requests. */
 export const PROTOCOL_VERSION_META = 'io.modelcontextprotocol/protocolVersion';
+/** Request `_meta` key that identifies the client on 2026 stateless requests. */
+export const CLIENT_INFO_META = 'io.modelcontextprotocol/clientInfo';
 
 /** Methods whose 2026 HTTP requests carry an `Mcp-Name` header. */
 const NAMED_METHODS = new Set(['tools/call', 'resources/read', 'prompts/get']);

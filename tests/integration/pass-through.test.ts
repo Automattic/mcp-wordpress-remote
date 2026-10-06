@@ -6,6 +6,9 @@ import { pathToFileURL } from 'node:url';
 import { connect } from 'node:net';
 
 const PROXY_PATH = process.env.PROXY_TEST_PATH || join(process.cwd(), 'dist/proxy.js');
+/** The client's product from `clientInfo`, then this proxy's product. */
+const userAgent = (client: string) =>
+  new RegExp(`^${client.replace(/\./g, '\\.')} mcp-wordpress-remote/\\d+\\.\\d+\\.\\d+$`);
 
 class Client {
   readonly process: ChildProcess;
@@ -201,6 +204,28 @@ describe('built proxy pass-through', () => {
     expect(received[1].headers['mcp-session-id']).toBe('fixture-session');
     expect(received[1].headers['x-custom']).toBe('preserve');
     expect(received[1].headers.authorization).toBe('Bearer fixture-token');
+    expect(received[0].headers['user-agent']).toMatch(userAgent('fixture-client/1'));
+    expect(received[1].headers['user-agent']).toMatch(userAgent('fixture-client/1'));
+  });
+
+  it('turns clientInfo into a valid User-Agent product', async () => {
+    await client.request(0, 'initialize', {
+      ...initialize(),
+      clientInfo: { name: 'Visual Studio Code', version: '1.105 (Universal)' },
+    });
+    expect(received[0].headers['user-agent']).toMatch(
+      userAgent('Visual-Studio-Code/1.105-Universal')
+    );
+  });
+
+  it('lets CUSTOM_HEADERS replace the default User-Agent', async () => {
+    await client.stop();
+    const port = (server.address() as { port: number }).port;
+    client = new Client(`http://127.0.0.1:${port}/mcp`, {
+      CUSTOM_HEADERS: '{"User-Agent":"custom-agent/1.0"}',
+    });
+    await client.request(0, 'initialize', initialize());
+    expect(received[0].headers['user-agent']).toBe('custom-agent/1.0');
   });
 
   it('does not forward eager follow-up requests before initialization responds', async () => {
@@ -345,6 +370,7 @@ describe('built proxy pass-through', () => {
     expect(received[0].headers['mcp-protocol-version']).toBe('2026-07-28');
     expect(received[0].headers['mcp-method']).toBe('tools/call');
     expect(received[0].headers['mcp-name']).toBe('=?base64?Y2Fmw6k=?=');
+    expect(received[0].headers['user-agent']).toMatch(userAgent('fixture/1'));
     await client.request(1, 'vendor/extension', {
       _meta: { 'io.modelcontextprotocol/protocolVersion': '2099-02-03' },
     });
@@ -615,6 +641,7 @@ describe('built proxy pass-through', () => {
       );
       expect(connects).toBeGreaterThan(0);
       expect(received[0].headers.authorization).toBe('Bearer fixture-token');
+      expect(received[0].headers['user-agent']).toMatch(userAgent('fixture-client/1'));
     } finally {
       await client.stop();
       sockets.forEach(socket => socket.destroy());
