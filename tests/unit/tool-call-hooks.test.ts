@@ -1,213 +1,148 @@
 import { jest } from '@jest/globals';
-import nock from 'nock';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
+// Transport seam: exercise the real bridge and registry, without repeating HTTP tests.
 describe('tool-call hooks', () => {
-  let createSessionContext: any;
-  let resolveInit: any;
-  let createRequestHandler: any;
-  let HANDLER_CONFIGS: any;
-  let registerToolCallHook: any;
-  let context: any;
-  let unregisterHooks: Array<() => void>;
+  let unregister: Array<() => void>;
+  let close: () => Promise<void>;
+  let local: Transport;
+  let remote: StreamableHTTPClientTransport;
+  let register: typeof import('../../src/lib/tool-call-hooks.js').registerToolCallHook;
+  let requests: JSONRPCMessage[];
+  let output: JSONRPCMessage[];
+  let response: Record<string, unknown>;
 
-  beforeAll(async () => {
-    process.env.WP_API_URL = 'https://test-wp.example.com';
-    process.env.JWT_TOKEN = 'test-jwt-token-for-hook-tests';
-    process.env.NODE_ENV = 'test';
-
+  beforeEach(async () => {
+    process.env.WP_API_TIMEOUT_MS = '1000';
     jest.resetModules();
-
-    const sessionModule = await import('../../src/lib/session-utils.js');
-    createSessionContext = sessionModule.createSessionContext;
-    resolveInit = sessionModule.resolveInit;
-
-    const handlerModule = await import('../../src/lib/request-handler-factory.js');
-    createRequestHandler = handlerModule.createRequestHandler;
-    HANDLER_CONFIGS = handlerModule.HANDLER_CONFIGS;
-
-    const hooksModule = await import('../../src/lib/tool-call-hooks.js');
-    registerToolCallHook = hooksModule.registerToolCallHook;
+    unregister = [];
+    requests = [];
+    output = [];
+    response = { content: [] };
+    register = (await import('../../src/lib/tool-call-hooks.js')).registerToolCallHook;
+    local = {
+      start: async () => {},
+      close: async () => {},
+      send: async message => {
+        output.push(message);
+      },
+    };
+    remote = {
+      start: async () => {},
+      close: async () => {},
+      setProtocolVersion: () => {},
+      send: async (message: JSONRPCMessage) => {
+        requests.push(message);
+        if ('method' in message && 'id' in message) {
+          remote.onmessage?.({ jsonrpc: '2.0', id: message.id, result: response });
+        }
+      },
+    } as unknown as StreamableHTTPClientTransport;
+    ({ close } = await (
+      await import('../../src/lib/pass-through.js')
+    ).startPassThrough(local, remote));
   });
 
-  afterAll(() => {
-    delete process.env.JWT_TOKEN;
-    nock.cleanAll();
+  afterEach(async () => {
+    unregister.forEach(remove => remove());
+    await close();
+    delete process.env.WP_API_TIMEOUT_MS;
   });
 
-  beforeEach(() => {
-    context = createSessionContext();
-    unregisterHooks = [];
-    nock.cleanAll();
-  });
-
-  afterEach(() => {
-    for (const unregister of unregisterHooks) {
-      unregister();
-    }
-  });
-
-  function addHook(hook: any): () => void {
-    const unregister = registerToolCallHook(hook);
-    unregisterHooks.push(unregister);
-    return unregister;
+  function add(hook: Parameters<typeof register>[0]) {
+    unregister.push(register(hook));
   }
-
-  function readyHandler(transportType: 'jsonrpc' | 'simple') {
-    context.transportType = transportType;
-    resolveInit(context, false);
-    return createRequestHandler(HANDLER_CONFIGS.callTool, context);
-  }
-
-  function mockToolCalls(times = 1, response: any = { content: [] }) {
-    const bodies: any[] = [];
-    nock('https://test-wp.example.com')
-      .post('/?rest_route=/wp/v2/wpmcp', (body: any) => {
-        bodies.push(body);
-        return true;
-      })
-      .times(times)
-      .reply(200, response);
-    return bodies;
-  }
-
-  async function flushHooks() {
+  async function flush() {
+    await new Promise<void>(resolve => setImmediate(resolve));
     await new Promise<void>(resolve => setImmediate(resolve));
   }
+  function call(method = 'tools/call') {
+    local.onmessage?.({ jsonrpc: '2.0', id: 1, method, params: { name: 'fixture' } });
+  }
 
-  it('runs hooks after a completed tools/call', async () => {
-    mockToolCalls();
-    const calls: string[] = [];
-    addHook(({ name }: { name: string }) => calls.push(name));
-
-    const response = await readyHandler('jsonrpc')({
-      id: 1,
-      params: { name: 'my-tool', arguments: { value: 1 } },
+  it('runs only after a successful tool response, preserving the uninterpreted result', async () => {
+    response = { content: 'client validates this', _meta: { extra: true } };
+    const names: string[] = [];
+    add(({ name }) => {
+      names.push(name);
     });
-
-    expect(response).toEqual({ content: [] });
-    expect(calls).toEqual([]);
-
-    await flushHooks();
-    expect(calls).toEqual(['my-tool']);
+    call();
+    expect(names).toEqual([]);
+    await flush();
+    expect(output).toEqual([{ jsonrpc: '2.0', id: 1, result: response }]);
+    expect(names).toEqual(['fixture']);
   });
 
-  it('does not interpret the WordPress response before running hooks', async () => {
-    const response = { content: 'validation belongs to the MCP client' };
-    mockToolCalls(1, response);
-    const calls: string[] = [];
-    addHook(() => calls.push('called'));
-
-    await expect(readyHandler('jsonrpc')({ id: 1, params: { name: 'my-tool' } })).resolves.toEqual(
-      response
-    );
-    await flushHooks();
-
-    expect(calls).toEqual(['called']);
-  });
-
-  it('does not run hooks for other methods', async () => {
-    nock('https://test-wp.example.com').post('/?rest_route=/wp/v2/wpmcp').reply(200, { tools: [] });
-    const calls: string[] = [];
-    addHook(() => calls.push('called'));
-
-    context.transportType = 'jsonrpc';
-    resolveInit(context, false);
-    const listTools = createRequestHandler(HANDLER_CONFIGS.listTools, context);
-    await listTools({ id: 1, params: {} });
-    await flushHooks();
-
-    expect(calls).toEqual([]);
-  });
-
-  it('does not run hooks when the WordPress request fails', async () => {
-    nock('https://test-wp.example.com')
-      .post('/?rest_route=/wp/v2/wpmcp')
-      .replyWithError(new Error('boom'));
-    const calls: string[] = [];
-    addHook(() => calls.push('called'));
-
-    await expect(
-      readyHandler('jsonrpc')({ id: 1, params: { name: 'my-tool' } })
-    ).rejects.toBeDefined();
-    await flushHooks();
-
-    expect(calls).toEqual([]);
+  it('does not run hooks on other methods or upstream errors', async () => {
+    const hook = jest.fn<() => void>();
+    add(hook);
+    call('tools/list');
+    await flush();
+    remote.send = async message => {
+      if ('id' in message)
+        remote.onmessage?.({
+          jsonrpc: '2.0',
+          id: message.id,
+          error: { code: -32602, message: 'fixture error' },
+        });
+    };
+    call();
+    await flush();
+    expect(hook).not.toHaveBeenCalled();
   });
 
   it('isolates synchronous throws and asynchronous rejections', async () => {
-    mockToolCalls();
-    addHook(() => {
+    add(() => {
       throw new Error('sync failure');
     });
-    addHook(async () => {
+    add(async () => {
       throw new Error('async failure');
     });
-    const calls: string[] = [];
-    addHook(() => calls.push('called'));
-
-    const unhandledRejections: unknown[] = [];
-    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
-    process.on('unhandledRejection', onUnhandledRejection);
-
-    try {
-      await expect(
-        readyHandler('jsonrpc')({ id: 1, params: { name: 'my-tool' } })
-      ).resolves.toEqual({ content: [] });
-      await flushHooks();
-
-      expect(calls).toEqual(['called']);
-      expect(unhandledRejections).toEqual([]);
-    } finally {
-      process.off('unhandledRejection', onUnhandledRejection);
-    }
+    const hook = jest.fn<() => void>();
+    add(hook);
+    call();
+    await flush();
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(output).toHaveLength(1);
   });
 
-  it('stops calling an unregistered hook', async () => {
-    mockToolCalls(2);
-    const calls: string[] = [];
-    const unregister = addHook(() => calls.push('called'));
-    const handler = readyHandler('jsonrpc');
-
-    await handler({ id: 1, params: { name: 'my-tool' } });
-    await flushHooks();
-    unregister();
-    await handler({ id: 2, params: { name: 'my-tool' } });
-    await flushHooks();
-
-    expect(calls).toEqual(['called']);
+  it('stops invoking unregistered hooks', async () => {
+    const hook = jest.fn<() => void>();
+    const remove = register(hook);
+    remove();
+    call();
+    await flush();
+    expect(hook).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['simple', false],
-    ['jsonrpc', true],
-  ] as const)('binds hook requests to the %s transport', async (transportType, useJsonRpc) => {
-    const bodies = mockToolCalls(2);
-    let resolveHookRequest: () => void;
-    const hookRequestCompleted = new Promise<void>(resolve => {
-      resolveHookRequest = resolve;
-    });
-    addHook(async ({ wpRequest }: any) => {
-      await wpRequest({
+  it('dispatches hook requests on the live transport and keeps their responses off client stdout', async () => {
+    let result: object | undefined;
+    add(async ({ wpRequest }) => {
+      result = await wpRequest({
         method: 'tools/call',
-        name: 'telemetry-tool',
-        arguments: { event: 'test' },
+        name: 'telemetry',
+        arguments: { event: 'fixture' },
       });
-      resolveHookRequest();
     });
+    call();
+    await flush();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: 'telemetry', arguments: { event: 'fixture' } },
+    });
+    expect(result).toEqual({ content: [] });
+    expect(output).toHaveLength(1);
+  });
 
-    await readyHandler(transportType)({ id: 1, params: { name: 'my-tool' } });
-    await hookRequestCompleted;
-
-    expect(bodies).toHaveLength(2);
-    if (useJsonRpc) {
-      expect(bodies[1]).toMatchObject({
-        jsonrpc: '2.0',
-        method: 'tools/call',
-        params: { name: 'telemetry-tool' },
-      });
-    } else {
-      expect(bodies[1]).toMatchObject({ method: 'tools/call', name: 'telemetry-tool' });
-      expect(bodies[1]).not.toHaveProperty('jsonrpc');
-    }
+  it('routes a JSON-RPC wpRequest without params over the live transport without leaking envelope fields', async () => {
+    const { wpRequest } = await import('../../src/lib/wordpress-api.js');
+    await wpRequest({ jsonrpc: '2.0', id: 7, method: 'tools/list' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ method: 'tools/list' });
+    expect((requests[0] as { params?: unknown }).params).toEqual({});
   });
 });

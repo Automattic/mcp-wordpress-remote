@@ -30,7 +30,7 @@ jest.unstable_mockModule('../../src/lib/coordination.js', () => ({
 }));
 
 // The WordPress MCP endpoint used by the source code
-const WP_MCP_ENDPOINT = '/?rest_route=/wp/v2/wpmcp';
+const WP_MCP_ENDPOINT = '/?rest_route=/mcp/mcp-adapter-default-server';
 
 function createJsonRpcResult(id: number, result: any) {
   return {
@@ -82,8 +82,7 @@ describe('WordPress API Module', () => {
         [true, '2025-11-25', '2025-11-25', '2025-06-18'],
         [false, '2025-11-25', '2025-11-25', '2025-11-25'],
         [false, '2025-06-18', '2025-06-18', '2025-06-18'],
-        [true, '2026-01-01', '2025-11-25', '2025-11-25'],
-        [true, undefined, '2025-11-25', '2025-11-25'],
+        [true, '2099-01-01', '2099-01-01', '2099-01-02'],
       ])('aligns body and headers: jsonrpc=%s client=%s offered=%s accepted=%s', async (jsonrpc, client, offered, accepted) => {
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
         const request = jsonrpc
@@ -92,7 +91,7 @@ describe('WordPress API Module', () => {
         const original = JSON.stringify(request);
         nock('https://test-site.com')
           .matchHeader('MCP-Protocol-Version', offered)
-          .post(WP_MCP_ENDPOINT, body => (jsonrpc ? body.params : body).protocolVersion === offered)
+          .post(WP_MCP_ENDPOINT, body => body.jsonrpc === '2.0' && body.params.protocolVersion === offered)
           .reply(200, jsonrpc ? createJsonRpcResult(1, { protocolVersion: accepted }) : { protocolVersion: accepted });
         await wpRequest(request, jsonrpc);
         expect(JSON.stringify(request)).toBe(original);
@@ -104,20 +103,20 @@ describe('WordPress API Module', () => {
         expect(nock.isDone()).toBe(true);
       });
 
-      it('rejects an unsupported backend version', async () => {
+      it('accepts the backend version without a proxy allowlist', async () => {
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
         nock('https://test-site.com').post(WP_MCP_ENDPOINT)
           .reply(200, createJsonRpcResult(1, { protocolVersion: '2026-01-01' }));
         await expect(wpRequest({ method: 'initialize', params: {} }))
-          .rejects.toThrow('Unsupported WordPress MCP protocol version');
+          .resolves.toEqual({ protocolVersion: '2026-01-01' });
       });
 
-      it('keeps headers aligned with the legacy fallback when the version is absent', async () => {
+      it('does not invent a version when the initialization response omits it', async () => {
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
         nock('https://test-site.com').post(WP_MCP_ENDPOINT)
           .reply(200, createJsonRpcResult(1, { capabilities: {} }));
         await wpRequest({ method: 'initialize', params: {} });
-        nock('https://test-site.com').matchHeader('MCP-Protocol-Version', '2025-06-18')
+        nock('https://test-site.com').matchHeader('MCP-Protocol-Version', value => value === undefined)
           .post(WP_MCP_ENDPOINT).reply(200, { tools: [] });
         await wpRequest({ method: 'tools/list' });
         expect(nock.isDone()).toBe(true);
@@ -388,7 +387,7 @@ describe('WordPress API Module', () => {
         const requestParams = { method: 'tools/list', cursor: 'abc123' };
 
         nock('https://my-wp-site.com')
-          .post(WP_MCP_ENDPOINT, requestParams)
+          .post(WP_MCP_ENDPOINT, body => body.jsonrpc === '2.0' && body.method === requestParams.method && body.params.cursor === requestParams.cursor)
           .reply(200, { status: 'success' });
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');
@@ -1005,7 +1004,7 @@ describe('WordPress API Module', () => {
         });
 
         nock('https://my-wp-site.com')
-          .post(WP_MCP_ENDPOINT, { method: 'init' })
+          .post(WP_MCP_ENDPOINT, body => body.jsonrpc === '2.0' && body.method === 'init' && Object.keys(body.params).length === 0)
           .reply(200, { status: 'success' });
 
         const { wpRequest } = await import('../../src/lib/wordpress-api.js');

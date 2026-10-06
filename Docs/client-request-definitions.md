@@ -1,4 +1,6 @@
-ClientRequest definition, which includes:
+# Forwarded MCP messages
+
+The proxy forwards generic JSON-RPC messages and does not maintain a method allowlist. The methods below are examples from initialization-based MCP revisions; the configured endpoint owns which methods and capabilities are available. Client notifications, server-initiated requests, and client replies are forwarded as well. Metadata-based revisions can start with `server/discover` or another request carrying per-request metadata.
 
 ## Core Protocol Methods:
 

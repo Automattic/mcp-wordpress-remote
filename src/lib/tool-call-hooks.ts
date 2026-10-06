@@ -12,7 +12,7 @@
 
 import { logger } from './utils.js';
 import type { WordPressResponse } from './types.js';
-import type { WPRequestParams } from './mcp-types.js';
+import type { WordPressRequestParams } from './types.js';
 
 /** Context passed to each hook after a tool call completes. */
 export interface ToolCallContext {
@@ -20,11 +20,10 @@ export interface ToolCallContext {
   name: string;
   /**
    * Dispatch an additional request over the proxy's live, authenticated
-   * session. The request is prepared for the session's detected transport
-   * (JSON-RPC envelope or simple format) before it is sent, e.g.
+   * session. The request is prepared as JSON-RPC before it is sent, e.g.
    * `wpRequest({ method: 'tools/call', name, arguments })`.
    */
-  wpRequest: (params: WPRequestParams) => Promise<WordPressResponse>;
+  wpRequest: (params: WordPressRequestParams) => Promise<WordPressResponse>;
 }
 
 /** A hook fired after each completed `tools/call`. May be async. */

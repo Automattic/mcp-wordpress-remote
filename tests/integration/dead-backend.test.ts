@@ -18,7 +18,7 @@ import { once } from 'events';
 import { join } from 'path';
 import { InitializeResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
-const PROXY_PATH = join(process.cwd(), 'dist/proxy.js');
+const PROXY_PATH = process.env.PROXY_TEST_PATH || join(process.cwd(), 'dist/proxy.js');
 
 /** Send a JSON-RPC message to the proxy's stdin (newline-delimited). */
 function send(proc: ChildProcess, message: object): void {
@@ -169,6 +169,5 @@ describe('dead backend integration', () => {
     expect(toolsResponse.error.data.reason).toBe('failed');
   }, 30_000);
 
-  // Healthy-backend integration test omitted: unit tests cover the happy path.
-  // A full test here needs a real or mocked WordPress endpoint in the child process.
+  // Healthy and streaming endpoints are exercised in pass-through.test.ts.
 });

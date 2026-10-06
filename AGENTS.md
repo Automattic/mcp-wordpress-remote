@@ -12,7 +12,7 @@ MCP proxy server between an MCP client and a WordPress backend.
 "Works in repo" is not enough. Gate on "works from packed artifact in clean environment."
 
 1. Build and pack: `npm ci && npm run build && npm pack`
-2. Install the tarball in a clean temp dir. Confirm `dist/proxy.js` is the tsup bundle (~2.4 MB single file), not per-file output — the binary has no `--help`, so it cannot be smoke-tested by invoking it bare
+2. Install the tarball in a clean temp dir. Confirm `dist/proxy.js` is a single tsup bundle, not per-file output — the binary has no `--help`, so it cannot be smoke-tested by invoking it bare
 3. Test against a healthy WordPress endpoint (normal init + tools/list flow)
 4. Test against a broken endpoint (fallback init, no malformed forwarding)
 5. Debug logs: verify no forwarded requests fire before init settles
@@ -26,10 +26,12 @@ The version lives in two places that must move together: `version` in `package.j
 - Run all tests: `npx jest tests/unit/ tests/integration/ --no-coverage` (`tests/unit/` alone skips the integration suites)
 - Build: `npm run build`
 - ESM mocking pattern: set `process.env` vars BEFORE `jest.resetModules()` + dynamic imports (CONFIG caches at import time)
-- WordPress API endpoint in nock: `/?rest_route=/wp/v2/wpmcp` (not `/wp/v2/wpmcp`)
+- WordPress API endpoint in nock: `/?rest_route=/mcp/mcp-adapter-default-server`; full configured endpoint paths are used directly
 
 ## Architecture notes
 
-- Transport detection (JSON-RPC vs simple) runs during the `initialize` handler
-- `sessionContext.transportType` starts null — the init-ready gate (`waitForInit`) blocks all handlers until detection settles
-- `waitForInit` returns `InitResult` (`{ ready: true } | { ready: false; reason: 'failed' | 'timeout' }`)
+- The CLI connects SDK transports directly; client initialization is forwarded without a separate SDK Client or Server handshake.
+- Forward complete JSON-RPC messages. Keep protocol-version and method selection with the endpoints; the proxy observes the initialize response to populate HTTP headers.
+- An in-flight initialize gates subsequent client methods until its response or failure. Preserve degraded connection handling and never retry through the archived simple-format transport.
+- Keep WordPress authentication/configuration in the shared HTTP header helper. System-proxy responses use Node streams and require Web stream adaptation for SDK SSE parsing.
+- Verify CLI behavior through `tests/integration/pass-through.test.ts`. It can also target a clean installed artifact with `PROXY_TEST_PATH=/absolute/path/to/dist/proxy.js`.

@@ -59,7 +59,7 @@
     "version:major": "npm version major"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.8.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@tootallnate/quickjs-emscripten": "^0.23.0",
     "eventsource-parser": "^3.0.1",
     "express": "^4.18.2",
