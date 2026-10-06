@@ -1,11 +1,11 @@
 /**
  * External dependencies
  */
-import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createParser } from 'eventsource-parser';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
-import { logger, LogLevel } from './utils.js';
+import { logger } from './utils.js';
 import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from './config.js';
 import { proxyFetch } from './fetch-utils.js';
 import { WPTokens, AuthError, APIError } from './oauth-types.js';
@@ -14,12 +14,7 @@ import {
   extractNetworkErrorMessage,
   getConnectionErrorHint,
 } from './error-utils.js';
-import {
-  getValidTokens,
-  generateServerUrlHash,
-  cleanupExpiredTokens,
-} from './persistent-auth-config.js';
-import { PersistentWPOAuthClientProvider } from './persistent-oauth-client-provider.js';
+import { getValidTokens, generateServerUrlHash } from './persistent-auth-config.js';
 import { MCPOAuthProvider } from './mcp-oauth-provider.js';
 import { createLazyWPAuthCoordinator } from './coordination.js';
 
@@ -31,17 +26,17 @@ import { createLazyWPAuthCoordinator } from './coordination.js';
  */
 
 // Global OAuth provider for WordPress API access
-let legacyOAuthProvider: PersistentWPOAuthClientProvider | null = null;
 let mcpOAuthProvider: MCPOAuthProvider | null = null;
 let authCoordinator: any = null;
 let globalEvents: EventEmitter | null = null;
 
 // Global session ID received from WordPress server
 let globalSessionId: string | null = null;
-let lastInitializeRequest: { requestData: any; useJsonRpc: boolean } | null = null;
+let negotiatedProtocolVersion: string | null = null;
+let lastInitializeRequest: any = null;
 let sessionRefreshPromise: Promise<void> | null = null;
 
-const WP_MCP_ENDPOINT = '/wp/v2/wpmcp';
+const WP_MCP_ENDPOINT = '/mcp/mcp-adapter-default-server';
 const INVALID_SESSION_ERROR_CODES = new Set([-32602, -32005]);
 const INVALID_SESSION_ERROR_MESSAGE = 'Invalid or expired session';
 const SESSION_NOT_FOUND_ERROR_MESSAGE = 'Session not found';
@@ -79,7 +74,13 @@ function parseSSEMessage(text: string): unknown {
       // eventsource-parser leaves `event.event` as undefined in that case rather
       // than defaulting to "message" like the browser EventSource API.
       if (!event.event || event.event === 'message') {
-        result = JSON.parse(event.data);
+        const message = JSON.parse(event.data);
+        if (message.method) {
+          // This one-shot helper cannot answer server requests or relay notifications.
+          logger.warn(`Ignoring server message in standalone request: ${message.method}`, 'API');
+          return;
+        }
+        result = message;
         found = true;
       }
     },
@@ -219,8 +220,28 @@ function getCurrentApiUrl(): string {
   return process.env.WP_API_URL || CONFIG.WP_API_URL;
 }
 
-function getRequestUrl(): string {
+export function getRequestUrl(): string {
   return constructApiUrl(getCurrentApiUrl(), WP_MCP_ENDPOINT);
+}
+
+export function setWordPressSession(
+  sessionId: string | undefined,
+  version: string | undefined
+): void {
+  globalSessionId = sessionId ?? null;
+  negotiatedProtocolVersion = version ?? null;
+}
+
+const LIVE_REQUEST_KEY = Symbol.for('@automattic/mcp-wordpress-remote:live-request');
+type LiveRequest = (params: WordPressRequestParams) => Promise<WordPressResponse>;
+
+/** Share the active connection with consumers of the separate /lib bundle. */
+export function bindWordPressRequest(request: LiveRequest): () => void {
+  const shared = globalThis as Record<PropertyKey, unknown>;
+  shared[LIVE_REQUEST_KEY] = request;
+  return () => {
+    if (shared[LIVE_REQUEST_KEY] === request) delete shared[LIVE_REQUEST_KEY];
+  };
 }
 
 function cloneRequestData<T>(requestData: T): T {
@@ -231,11 +252,23 @@ function isInitializeRequest(requestData: any): boolean {
   return requestData?.method === 'initialize';
 }
 
-function cacheInitializeRequest(requestData: any, useJsonRpc: boolean): void {
-  lastInitializeRequest = {
-    requestData: cloneRequestData(requestData),
-    useJsonRpc,
-  };
+function recordProtocolVersion(requestData: any, result: any): void {
+  if (!isInitializeRequest(requestData)) return;
+
+  const version = result?.protocolVersion;
+  if (typeof version !== 'string' || !version) return;
+  if (negotiatedProtocolVersion && negotiatedProtocolVersion !== version) {
+    throw new APIError(
+      'WordPress changed the negotiated MCP protocol version; reconnect the client',
+      0,
+      getRequestUrl()
+    );
+  }
+  negotiatedProtocolVersion = version;
+}
+
+function cacheInitializeRequest(requestData: any): void {
+  lastInitializeRequest = cloneRequestData(requestData);
 }
 
 function parseApiErrorResponse(error: APIError): any {
@@ -286,24 +319,8 @@ interface RequestExecutionResult {
   sessionIdUsed: string | null;
 }
 
-async function executeWordPressRequest(
-  requestData: any,
-  useJsonRpc: boolean,
-  sessionIdUsed: string | null
-): Promise<RequestExecutionResult> {
-  const url = getRequestUrl();
-
-  const method = 'POST';
-
-  // Log the request parameters for debugging
-  if (useJsonRpc) {
-    logger.api(`Request method: ${requestData.method || 'unknown'} (JSON-RPC)`);
-    logger.debug(`JSON-RPC message: ${JSON.stringify(requestData)}`, 'API');
-  } else {
-    logger.api(`Request method: ${requestData.method || 'unknown'} (Simple)`);
-    logger.debug(`Simple request: ${JSON.stringify(requestData)}`, 'API');
-  }
-
+export async function getWordPressHeaders(requestData: any): Promise<Record<string, string>> {
+  validateEnvironment();
   // Prepare authorization header - try authentication methods in order of priority
   let authHeader: string = '';
 
@@ -333,11 +350,8 @@ async function executeWordPressRequest(
     let username: string;
     let password: string;
 
-    // Determine method and tool name based on transport type
-    const method = useJsonRpc ? requestData.method : requestData.method;
-    const toolName = useJsonRpc
-      ? requestData.params?.name || requestData.params?.tool
-      : requestData.name || requestData.tool || requestData.args?.tool;
+    const method = requestData?.method;
+    const toolName = requestData?.params?.name || requestData?.params?.tool;
 
     if (method === 'tools/call' && toolName && toolName.startsWith('wc_reports_')) {
       // Use WooCommerce credentials for WooCommerce report tools
@@ -373,6 +387,10 @@ async function executeWordPressRequest(
 
   // Get custom headers early to check if they can serve as authentication
   const customHeaders = getCustomHeaders();
+  // Header names are case-insensitive; configuration cannot override negotiation.
+  for (const name of Object.keys(customHeaders)) {
+    if (name.toLowerCase() === 'mcp-protocol-version') delete customHeaders[name];
+  }
   const hasCustomHeaders = Object.keys(customHeaders).length > 0;
 
   // Ensure we have an authorization header OR custom headers for authentication
@@ -383,42 +401,34 @@ async function executeWordPressRequest(
     );
   }
 
-  logger.debug(`Environment: ${CONFIG.NODE_ENV}`, 'API');
-  logger.debug(`Base API URL: ${getCurrentApiUrl()}`, 'API');
-  logger.debug(`Final requesting URL: ${url}`, 'API');
+  if (authHeader) {
+    for (const name of Object.keys(customHeaders)) {
+      if (name.toLowerCase() === 'authorization') delete customHeaders[name];
+    }
+    customHeaders.Authorization = authHeader;
+  }
+  return customHeaders;
+}
 
-  // Build headers object - only add Authorization if we have one
+async function executeWordPressRequest(
+  requestData: any,
+  sessionIdUsed: string | null
+): Promise<RequestExecutionResult> {
+  const url = getRequestUrl();
+
+  const method = 'POST';
+
+  logger.api(`Request method: ${requestData.method || 'unknown'} (JSON-RPC)`);
   const headers: Record<string, string> = {
+    ...(await getWordPressHeaders(requestData)),
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
-    'MCP-Protocol-Version': '2025-06-18', // MCP protocol version
-    ...customHeaders, // Merge custom headers
   };
-
-  // Add Authorization header only if we have one
-  if (authHeader) {
-    headers.Authorization = authHeader;
-  }
-
-  // Add session ID header if available for this request
-  if (sessionIdUsed) {
-    headers['Mcp-Session-Id'] = sessionIdUsed;
-  }
-
-  // Log authentication method being used
-  if (authHeader) {
-    logger.debug('Using Authorization header for authentication', 'API');
-  } else if (hasCustomHeaders) {
-    logger.auth('Using custom headers for authentication (no Authorization header)');
-  }
-
-  // Log custom headers (without exposing sensitive values)
-  if (hasCustomHeaders) {
-    logger.debug(`Custom headers added: ${Object.keys(customHeaders).join(', ')}`, 'API');
-    for (const [key, value] of Object.entries(customHeaders)) {
-      logger.debug(`Header ${key}: ${value.length} characters`, 'API');
-    }
-  }
+  const version = isInitializeRequest(requestData)
+    ? requestData.params?.protocolVersion
+    : negotiatedProtocolVersion;
+  if (typeof version === 'string' && version) headers['MCP-Protocol-Version'] = version;
+  if (sessionIdUsed) headers['Mcp-Session-Id'] = sessionIdUsed;
 
   // Bound the request so a stalled upstream fails fast with a clear error
   // instead of hanging until the OS TCP timeout. The initialize handshake —
@@ -475,7 +485,7 @@ async function executeWordPressRequest(
     logger.debug(`Response data: ${JSON.stringify(responseData)}`, 'API');
 
     // Handle response format based on transport type
-    if (useJsonRpc && responseData && typeof responseData === 'object') {
+    if (responseData && typeof responseData === 'object') {
       const jsonrpcResponse = responseData as any; // Type assertion for JSON-RPC response
       // Check if this is a JSON-RPC response
       if (jsonrpcResponse.jsonrpc === '2.0') {
@@ -489,6 +499,7 @@ async function executeWordPressRequest(
             jsonrpcResponse.error
           );
         } else if (jsonrpcResponse.result !== undefined) {
+          recordProtocolVersion(requestData, jsonrpcResponse.result);
           // Extract result from JSON-RPC response
           return {
             responseData: jsonrpcResponse.result as WordPressResponse,
@@ -498,7 +509,8 @@ async function executeWordPressRequest(
       }
     }
 
-    // For simple transport or non-JSON-RPC responses, return response as-is
+    // Preserve the library helper response contract for non-JSON-RPC replies.
+    recordProtocolVersion(requestData, responseData);
     return {
       responseData: responseData as WordPressResponse,
       sessionIdUsed,
@@ -558,11 +570,7 @@ async function refreshSession(failedSessionId: string | null): Promise<void> {
     logger.warn('WordPress session rejected; refreshing session via initialize', 'SESSION');
     globalSessionId = null;
 
-    await executeWordPressRequest(
-      lastInitializeRequest.requestData,
-      lastInitializeRequest.useJsonRpc,
-      null
-    );
+    await executeWordPressRequest(lastInitializeRequest, null);
 
     if (!globalSessionId) {
       throw new APIError(
@@ -580,24 +588,40 @@ async function refreshSession(failedSessionId: string | null): Promise<void> {
   }
 }
 
+/**
+ * Send one request to WordPress. While the proxy is running, the request rides its live
+ * connection, and session recovery is left to the connected client.
+ *
+ * @param useJsonRpc Deprecated and ignored; requests are always sent as JSON-RPC.
+ */
 export async function wpRequest(
   requestData: any,
   useJsonRpc: boolean = true,
   options: { allowSessionRecovery?: boolean } = {}
 ): Promise<WordPressResponse> {
+  // Accept both existing helper argument shapes, but always send standard JSON-RPC.
+  if (requestData.jsonrpc !== '2.0') {
+    const { method, id, params, ...arguments_ } = requestData;
+    requestData = { jsonrpc: '2.0', id: id ?? randomUUID(), method, params: params ?? arguments_ };
+  }
+  const liveRequest = (globalThis as Record<PropertyKey, unknown>)[LIVE_REQUEST_KEY] as
+    | LiveRequest
+    | undefined;
+  if (liveRequest) return liveRequest({ method: requestData.method, ...requestData.params });
+
   // Validate environment variables first
   validateEnvironment();
 
   const allowSessionRecovery = options.allowSessionRecovery !== false;
 
   if (isInitializeRequest(requestData)) {
-    cacheInitializeRequest(requestData, useJsonRpc);
+    cacheInitializeRequest(requestData);
   }
 
   const sessionIdUsed = globalSessionId;
 
   try {
-    const result = await executeWordPressRequest(requestData, useJsonRpc, sessionIdUsed);
+    const result = await executeWordPressRequest(requestData, sessionIdUsed);
     return result.responseData;
   } catch (error) {
     if (
@@ -613,7 +637,7 @@ export async function wpRequest(
 
       await refreshSession(sessionIdUsed);
 
-      const retriedResult = await executeWordPressRequest(requestData, useJsonRpc, globalSessionId);
+      const retriedResult = await executeWordPressRequest(requestData, globalSessionId);
       return retriedResult.responseData;
     }
 

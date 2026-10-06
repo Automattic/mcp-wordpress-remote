@@ -1,6 +1,6 @@
 # MCP WordPress Remote
 
-**A Model Context Protocol (MCP) server for seamless WordPress integration**
+**A stdio-to-HTTP pass-through proxy for WordPress MCP servers**
 
 Connect AI assistants like Claude Desktop to your WordPress sites with multiple authentication methods including OAuth 2.0, JWT tokens, and application passwords.
 
@@ -102,7 +102,7 @@ Custom headers are included in:
 
 1. **Start your MCP client** (Claude Desktop, etc.)
 2. **Choose authentication method** based on your preference:
-   - **OAuth 2.0** (default): Browser opens automatically for authorization
+   - **OAuth 2.0**: Enable `OAUTH_ENABLED=true` to open the browser for authorization
    - **JWT Token**: Set `JWT_TOKEN` environment variable
    - **Application Password**: Set `WP_API_USERNAME` and `WP_API_PASSWORD`
 3. **Start using WordPress features** in your AI assistant
@@ -111,9 +111,17 @@ Custom headers are included in:
 
 Install the [MCP Adapter](https://github.com/WordPress/mcp-adapter) plugin on your WordPress site. Once active, it registers a default MCP server at `/wp-json/mcp/mcp-adapter-default-server` — set `WP_API_URL` to that full URL (examples throughout this README show the pattern). To target a custom server id or namespace, pass the full URL of that server instead.
 
-### Legacy `wordpress-mcp` plugin
+### Forwarding behavior
 
-Earlier versions of this proxy were designed for [`Automattic/wordpress-mcp`](https://github.com/Automattic/wordpress-mcp), which exposes its endpoint at `/wp-json/wp/v2/wpmcp`. That plugin is deprecated in favor of `mcp-adapter`, but existing installs continue to work — for backwards compatibility, a bare-domain `WP_API_URL` (e.g. `https://your-wordpress-site.com`) still resolves to the `wordpress-mcp` endpoint. New setups should install `mcp-adapter` and use the full URL shown above.
+The proxy forwards the MCP client's messages to the configured endpoint and returns the server's messages. It does not send its own initialization probe, select an MCP version, or register a fixed set of methods. The client and server own version negotiation, capabilities, and result validation. Requests, notifications, server requests, IDs, and metadata travel through the bridge; JSON and SSE responses are supported.
+
+For initialization-based MCP connections, the server's selected version and session ID are used in subsequent HTTP headers. Requests carrying `io.modelcontextprotocol/protocolVersion` in `params._meta` use that version directly and do not require a proxy-generated handshake. This removes the proxy's version allowlist; it does not translate between protocol revisions or establish full compliance with every newer transport feature.
+
+Existing authentication, custom headers, timeout, logging, token-storage, and system-proxy settings remain available. A bare-domain `WP_API_URL` now resolves to `/?rest_route=/mcp/mcp-adapter-default-server`. Full endpoint URLs remain configurable. The archived `wordpress-mcp` plugin's method-only request format and automatic transport fallback have been removed.
+
+If the upstream connection fails during initialization, the proxy retains its degraded response with `experimental.connectionFailed` and no usable capabilities, using the client's offered version. Follow-up requests are rejected locally. Server-generated JSON-RPC errors are forwarded rather than converted to a successful handshake. The proxy does not silently reinitialize or retry failed client requests.
+
+Tool-call hooks and `wpRequest` from the `/lib` bundle share the live authenticated connection when the proxy is running. Hook responses remain internal and hook failures cannot change the client response. Standalone `wpRequest` retains its result-returning interface and optional session recovery; both its existing argument shapes are encoded as standard JSON-RPC.
 
 ## Authentication Methods
 
@@ -248,8 +256,8 @@ For WooCommerce-specific tools and reports:
 
 | Variable                      | Description                                      | Default              | Required              |
 | ----------------------------- | ------------------------------------------------ | -------------------- | --------------------- |
-| `WP_API_URL`                  | WordPress site URL including the MCP endpoint path (e.g. `…/wp-json/mcp/mcp-adapter-default-server`). A bare domain resolves to the deprecated `wordpress-mcp` endpoint for backwards compatibility. | - | ✅ |
-| `OAUTH_ENABLED`               | Enable OAuth authentication                      | `true`               | -                     |
+| `WP_API_URL`                  | WordPress site URL including the MCP endpoint path (e.g. `…/wp-json/mcp/mcp-adapter-default-server`). A bare domain resolves to the MCP Adapter default server. | - | ✅ |
+| `OAUTH_ENABLED`               | Enable OAuth authentication                      | `false`               | -                     |
 | `OAUTH_CALLBACK_PORT`         | OAuth callback port                              | `7665`               | -                     |
 | `OAUTH_HOST`                  | OAuth callback hostname                          | `127.0.0.1`          | -                     |
 | `WP_OAUTH_CLIENT_ID`          | Custom OAuth client ID                           | -                    | -                     |
@@ -268,7 +276,7 @@ For WooCommerce-specific tools and reports:
 | `LOG_LEVEL`                   | Log level (0-3)                                  | `2`                  | -                     |
 | `LOG_TO_STDERR`               | Mirror all log levels to stderr (errors always are) | `false`           | -                     |
 | `WP_API_TIMEOUT_MS`           | Request timeout for tool calls (ms)              | `120000`             | -                     |
-| `WP_API_INIT_TIMEOUT_MS`      | Timeout for the initialize handshake (ms)        | `25000`              | -                     |
+| `WP_API_INIT_TIMEOUT_MS`      | Initialize timeout (ms), after OAuth login       | `25000`              | -                     |
 | **TLS / Certificates**        |                                                  |                      |                       |
 | `NODE_EXTRA_CA_CERTS`         | Path to an extra CA file to trust (mkcert/corporate CA) | -             | -                     |
 | `NODE_USE_SYSTEM_CA`          | Trust the OS certificate store (Node 22.15+)     | -                    | -                     |
