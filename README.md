@@ -19,6 +19,35 @@ Connect AI assistants like Claude Desktop to your WordPress sites with multiple 
 - **Comprehensive Logging** - Structured logging with categories and levels
 - **Complete MCP Support** - Tools, resources, prompts, and more
 
+## When to use this proxy
+
+If your MCP client supports the Streamable HTTP transport and can authenticate to your site, connect it to the MCP Adapter endpoint directly. You don't need this proxy. For example, in Claude Code (`.mcp.json`), using an application password:
+
+```json
+{
+  "mcpServers": {
+    "wordpress": {
+      "type": "http",
+      "url": "https://your-wordpress-site.com/wp-json/mcp/mcp-adapter-default-server",
+      "headers": {
+        "Authorization": "Basic <base64 of username:application-password>"
+      }
+    }
+  }
+}
+```
+
+Other clients use their own config format. Check your client's documentation for remote or HTTP MCP servers.
+
+Use the proxy when one of these applies:
+
+1. **Your client only supports stdio.** It can launch a local command but cannot connect to an HTTP MCP server.
+2. **Your client can't authenticate the way your site requires.** The proxy can send application passwords, JWT tokens, WooCommerce keys, or [custom headers](#custom-headers), and it can run the [OAuth flow](#authentication-methods) and store tokens for clients that can't.
+3. **Your traffic must go through a corporate proxy or PAC file.** Set `USE_SYSTEM_PROXY=true` to route requests through the system proxy settings.
+4. **Your site is slow or unreliable.** `WP_API_TIMEOUT_MS` and `WP_API_INIT_TIMEOUT_MS` set the timeouts, and a failed initialize returns a degraded response instead of a broken connection (see [Forwarding behavior](#forwarding-behavior)).
+5. **You need a local record of the connection.** `LOG_FILE` with `LOG_LEVEL=3` logs each forwarded method plus connection and authentication events (see [Log Analysis](#log-analysis)).
+6. **You are building a packaged integration.** Tool-call hooks from the `/lib` bundle can send extra requests over the proxy's authenticated connection, for example for usage telemetry.
+
 ## Quick Start
 
 ### Installation
@@ -475,15 +504,6 @@ Log levels:
 - **Automatic validation** before each API request
 - **Expired token cleanup** and refresh handling
 - **Multi-instance coordination** prevents authentication conflicts
-
-## Why Use MCP WordPress Remote?
-
-1. **Multiple Authentication Methods** - Choose what works best for your setup
-2. **Enhanced Security** - OAuth 2.0 with persistent token storage
-3. **Better User Experience** - One-time setup with automatic token management
-4. **Multi-Instance Support** - Works reliably with multiple MCP clients
-5. **Comprehensive Logging** - Detailed logs for troubleshooting
-6. **Easy Setup** - No global installation required with npx
 
 ## Requirements
 
