@@ -153,6 +153,62 @@ describe('WordPress transport rejected OAuth token', () => {
     }
   });
 
+  it('retries without reporting a failure when the 401 body arrives late', async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const delayedRejection = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            timer = setTimeout(() => {
+              controller.enqueue(new TextEncoder().encode('{"code":"oauth2_invalid_token"}'));
+              controller.close();
+            }, 50);
+          },
+          cancel() {
+            clearTimeout(timer);
+          },
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      ) as any;
+    const { failures, received, transport, sentAuthorization } = await setup([
+      delayedRejection,
+      accepted,
+    ]);
+    try {
+      await transport.send(initialize);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(sentAuthorization()).toEqual(['Bearer stored-token', 'Bearer new-token']);
+      expect(failures).toEqual([]);
+      expect(received).toEqual([
+        { jsonrpc: '2.0', id: 0, result: { protocolVersion: '2025-11-25' } },
+      ]);
+    } finally {
+      await transport.close();
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('does not retry a request cancelled while the rejected token is discarded', async () => {
+    const api = await import('../../src/lib/wordpress-api.js');
+    const { transport, sentAuthorization } = await setup([rejected, accepted]);
+    jest.spyOn(api, 'discardRejectedOAuthToken').mockImplementation(async () => {
+      transport.cancelRequest(5);
+      return true;
+    });
+    try {
+      await transport.send({
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/call',
+        params: { name: 'delete_post', arguments: { id: 1 } },
+      });
+      expect(sentAuthorization()).toEqual(['Bearer stored-token']);
+    } finally {
+      await transport.close();
+      jest.restoreAllMocks();
+    }
+  });
+
   it('keeps the stored token when the rejected request used a different one', async () => {
     const { auth, serverUrlHash, transport, sentAuthorization } = await setup([rejected]);
     await auth.writeTokens(serverUrlHash, {

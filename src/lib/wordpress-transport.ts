@@ -150,6 +150,22 @@ export function createWordPressTransport(
         headers,
         signal: controller.signal,
       });
+      // Retry once with a new sign-in when WordPress rejects the stored token.
+      // Decide before wrapping the body, so discarding it cannot report a failure.
+      if (
+        response.status === 401 &&
+        !retried &&
+        (await discardRejectedOAuthToken(headers.get('Authorization')))
+      ) {
+        // node-fetch (used with SOCKS/PAC) exposes a Node stream instead of a Web stream.
+        const unread = response.body as any;
+        if (typeof unread?.cancel === 'function') await unread.cancel();
+        else unread?.destroy?.();
+        cleanup();
+        // The client may have cancelled the request while the token was discarded.
+        if (cancelled) return new Response(null, { status: 202 });
+        return send(url, init, true);
+      }
       // node-fetch (used with SOCKS/PAC) exposes a Node stream; the SDK requires Web streams.
       const body =
         response.body && typeof (response.body as any).getReader !== 'function'
@@ -179,15 +195,6 @@ export function createWordPressTransport(
           })
         : null;
       if (!stream) cleanup();
-      // Retry once with a new sign-in when WordPress rejects the stored token.
-      if (
-        response.status === 401 &&
-        !retried &&
-        (await discardRejectedOAuthToken(headers.get('Authorization')))
-      ) {
-        await stream?.cancel();
-        return send(url, init, true);
-      }
       const wrapped = new Response(stream, {
         status: response.status,
         statusText: response.statusText,
