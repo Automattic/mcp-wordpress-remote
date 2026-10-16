@@ -4,7 +4,7 @@ import { JSONRPCMessage, JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/
 import { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { CONFIG } from './config.js';
 import { proxyFetch } from './fetch-utils.js';
-import { getRequestUrl, getWordPressHeaders } from './wordpress-api.js';
+import { discardRejectedOAuthToken, getRequestUrl, getWordPressHeaders } from './wordpress-api.js';
 import { APIError } from './oauth-types.js';
 import { extractNetworkErrorCode, extractNetworkErrorMessage } from './error-utils.js';
 
@@ -62,7 +62,11 @@ export function createWordPressTransport(
 ): WordPressTransport {
   const inflight = new Map<string | number, () => void>();
   const toolHeaders = new Map<string, HeaderParam[]>();
-  const fetch: FetchLike = async (url, init) => {
+  const send = async (
+    url: string | URL,
+    init: RequestInit | undefined,
+    retried: boolean
+  ): Promise<Response> => {
     const message: JSONRPCMessage | undefined =
       typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
     const request = message && 'method' in message && 'id' in message ? message : undefined;
@@ -175,6 +179,15 @@ export function createWordPressTransport(
           })
         : null;
       if (!stream) cleanup();
+      // Retry once with a new sign-in when WordPress rejects the stored token.
+      if (
+        response.status === 401 &&
+        !retried &&
+        (await discardRejectedOAuthToken(headers.get('Authorization')))
+      ) {
+        await stream?.cancel();
+        return send(url, init, true);
+      }
       const wrapped = new Response(stream, {
         status: response.status,
         statusText: response.statusText,
@@ -209,6 +222,7 @@ export function createWordPressTransport(
       throw failure(error);
     }
   };
+  const fetch: FetchLike = (url, init) => send(url, init, false);
   return Object.assign(new StreamableHTTPClientTransport(new URL(getRequestUrl()), { fetch }), {
     cancelRequest(id: string | number) {
       inflight.get(id)?.();
