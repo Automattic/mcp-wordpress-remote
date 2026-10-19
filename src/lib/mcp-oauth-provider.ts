@@ -186,9 +186,9 @@ export class MCPOAuthProvider {
           const authInfo = parseWWWAuthenticateHeader(wwwAuthHeader);
           logger.oauth('WWW-Authenticate header parsed successfully');
 
-          if (authInfo.resource_metadata_url) {
+          if (authInfo.resource_metadata) {
             // Fetch protected resource metadata from the indicated URL
-            const metadataResponse = await proxyFetch(authInfo.resource_metadata_url, {
+            const metadataResponse = await proxyFetch(authInfo.resource_metadata, {
               headers: {
                 Accept: 'application/json',
                 ...customHeaders,

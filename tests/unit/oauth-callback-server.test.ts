@@ -68,7 +68,7 @@ describe('OAuth authorization startup', () => {
     // Keep the real callback server: stubbing start() hides Express 5's
     // error callback, which previously resolved startup despite EADDRINUSE.
     const discovery = nock('https://example.com')
-      .get('/.well-known/oauth-protected-resource')
+      .get('/.well-known/oauth-protected-resource/mcp')
       .twice()
       .reply(200, {
         resource: 'https://example.com/mcp',
@@ -80,6 +80,7 @@ describe('OAuth authorization startup', () => {
         issuer: 'https://example.com',
         authorization_endpoint: 'https://example.com/authorize',
         token_endpoint: 'https://example.com/token',
+        response_types_supported: ['code'],
       });
 
     try {

@@ -14,8 +14,13 @@ import {
   OAuthError,
 } from './oauth-types.js';
 import { logger } from './utils.js';
-import { getCustomHeaders } from './config.js';
-import { proxyFetch } from './fetch-utils.js';
+import { oauthFetch, validateOAuthUrl } from './oauth-http.js';
+import { buildDiscoveryUrls } from '@modelcontextprotocol/sdk/client/auth.js';
+import {
+  OAuthMetadataSchema,
+  OAuthProtectedResourceMetadataSchema,
+  OAuthTokensSchema,
+} from '@modelcontextprotocol/sdk/shared/auth.js';
 
 /**
  * Generate PKCE code verifier and challenge
@@ -69,138 +74,108 @@ export function generateCanonicalResourceURI(serverUrl: string): string {
 export async function discoverAuthorizationServerMetadata(
   authorizationServerUrl: string
 ): Promise<AuthorizationServerMetadata> {
-  try {
-    const metadataUrl = new URL('/.well-known/oauth-authorization-server', authorizationServerUrl);
-
-    logger.oauth(`Discovering authorization server metadata: ${metadataUrl}`);
-
-    // Include custom headers in discovery requests
-    const customHeaders = getCustomHeaders();
-    const response = await proxyFetch(metadataUrl.toString(), {
-      headers: {
-        Accept: 'application/json',
-        ...customHeaders,
-      },
-    });
-
-    if (!response.ok) {
+  const issuer = validateOAuthUrl(authorizationServerUrl);
+  if (issuer.search) throw new OAuthError('Issuer must not contain a query', 'INVALID_METADATA');
+  for (const { url } of buildDiscoveryUrls(issuer)) {
+    const response = await oauthFetch(url.toString(), { headers: { Accept: 'application/json' } });
+    if ([404, 405].includes(response.status)) continue;
+    if (!response.ok)
       throw new OAuthError(
-        `Failed to fetch authorization server metadata: ${response.status}`,
+        `Metadata request failed (${response.status})`,
         'METADATA_DISCOVERY_FAILED'
       );
-    }
-
-    const metadata = (await response.json()) as AuthorizationServerMetadata;
-
-    // Validate required fields
-    if (!metadata.authorization_endpoint || !metadata.token_endpoint) {
+    const parsed = OAuthMetadataSchema.safeParse(await response.json());
+    if (!parsed.success || parsed.data.issuer !== authorizationServerUrl) {
       throw new OAuthError(
-        'Authorization server metadata missing required endpoints',
+        'Authorization metadata has an invalid or mismatched issuer',
         'INVALID_METADATA'
       );
     }
-
-    logger.oauth('Authorization server metadata discovered successfully');
+    const metadata = parsed.data;
+    validateOAuthUrl(metadata.issuer);
+    validateOAuthUrl(metadata.authorization_endpoint);
+    validateOAuthUrl(metadata.token_endpoint);
+    if (metadata.registration_endpoint) validateOAuthUrl(metadata.registration_endpoint);
     return metadata;
-  } catch (error) {
-    if (error instanceof OAuthError) {
-      throw error;
-    }
-    throw new OAuthError(
-      `Error discovering authorization server metadata: ${error instanceof Error ? error.message : String(error)}`,
-      'METADATA_DISCOVERY_ERROR'
-    );
   }
+  throw new OAuthError('No authorization server metadata found', 'METADATA_DISCOVERY_FAILED');
 }
 
-/**
- * Discover OAuth 2.0 Protected Resource Metadata (RFC 9728)
- */
 export async function discoverProtectedResourceMetadata(
-  resourceUrl: string
+  resourceUrl: string,
+  resourceMetadataUrl?: string
 ): Promise<ProtectedResourceMetadata> {
-  try {
-    const url = new URL(resourceUrl);
-    const metadataUrl = new URL('/.well-known/oauth-protected-resource', url.origin);
-
-    logger.oauth(`Discovering protected resource metadata: ${metadataUrl}`);
-
-    // Include custom headers in discovery requests
-    const customHeaders = getCustomHeaders();
-    const response = await proxyFetch(metadataUrl.toString(), {
-      headers: {
-        Accept: 'application/json',
-        ...customHeaders,
-      },
-    });
-
-    if (!response.ok) {
+  const resource = validateOAuthUrl(resourceUrl);
+  const candidates = resourceMetadataUrl
+    ? [{ url: resourceMetadataUrl, expected: resourceUrl }]
+    : [
+        ...(resource.pathname !== '/'
+          ? [
+              {
+                url: `${resource.origin}/.well-known/oauth-protected-resource${resource.pathname}`,
+                expected: resourceUrl,
+              },
+            ]
+          : []),
+        {
+          url: `${resource.origin}/.well-known/oauth-protected-resource`,
+          expected: resource.pathname === '/' ? resourceUrl : resource.origin,
+        },
+      ];
+  for (const candidate of candidates) {
+    const response = await oauthFetch(candidate.url, { headers: { Accept: 'application/json' } });
+    if (!resourceMetadataUrl && [404, 405].includes(response.status)) continue;
+    if (!response.ok)
       throw new OAuthError(
-        `Failed to fetch protected resource metadata: ${response.status}`,
+        `Resource metadata request failed (${response.status})`,
         'RESOURCE_METADATA_DISCOVERY_FAILED'
       );
-    }
-
-    const metadata = (await response.json()) as ProtectedResourceMetadata;
-
-    // Validate required fields
-    if (!metadata.authorization_servers || metadata.authorization_servers.length === 0) {
+    const parsed = OAuthProtectedResourceMetadataSchema.safeParse(await response.json());
+    if (
+      !parsed.success ||
+      parsed.data.resource !== candidate.expected ||
+      !parsed.data.authorization_servers?.length
+    ) {
       throw new OAuthError(
-        'Protected resource metadata missing authorization servers',
+        'Protected resource metadata has an invalid or mismatched resource',
         'INVALID_RESOURCE_METADATA'
       );
     }
-
-    logger.oauth('Protected resource metadata discovered successfully');
-    return metadata;
-  } catch (error) {
-    if (error instanceof OAuthError) {
-      throw error;
-    }
-    throw new OAuthError(
-      `Error discovering protected resource metadata: ${error instanceof Error ? error.message : String(error)}`,
-      'RESOURCE_METADATA_DISCOVERY_ERROR'
-    );
+    for (const issuer of parsed.data.authorization_servers) validateOAuthUrl(issuer);
+    return parsed.data as ProtectedResourceMetadata;
   }
+  throw new OAuthError(
+    'No protected resource metadata found',
+    'RESOURCE_METADATA_DISCOVERY_FAILED'
+  );
 }
 
 /**
  * Parse WWW-Authenticate header from 401 responses (RFC 9728 Section 5.1)
  */
 export function parseWWWAuthenticateHeader(headerValue: string): WWWAuthenticateHeader {
-  const parts = headerValue.split(/\s+/);
-  const scheme = parts[0];
-
-  const result: WWWAuthenticateHeader = { scheme };
-
-  // Parse parameters
-  const paramString = parts.slice(1).join(' ');
-  const paramMatches = paramString.matchAll(/(\w+)="([^"]+)"/g);
-
-  for (const match of paramMatches) {
-    const [, key, value] = match;
-    switch (key) {
-      case 'realm':
-        result.realm = value;
-        break;
-      case 'scope':
-        result.scope = value;
-        break;
-      case 'error':
-        result.error = value;
-        break;
-      case 'error_description':
-        result.error_description = value;
-        break;
-      case 'error_uri':
-        result.error_uri = value;
-        break;
-      case 'resource_metadata_url':
-        result.resource_metadata_url = value;
-        break;
-    }
+  const bearer = /(?:^|,)\s*Bearer(?:\s+|$)/i.exec(headerValue);
+  const result: WWWAuthenticateHeader = { scheme: bearer ? 'Bearer' : headerValue.split(/\s+/)[0] };
+  if (!bearer) return result;
+  const parameters = headerValue
+    .slice(bearer.index + bearer[0].length)
+    .split(/,\s*(?=[A-Za-z][\w-]*\s+(?![=]))/)[0];
+  const known = new Set([
+    'realm',
+    'scope',
+    'error',
+    'error_description',
+    'error_uri',
+    'resource_metadata',
+  ]);
+  for (const match of parameters.matchAll(/([\w-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))/g)) {
+    const key = match[1].toLowerCase();
+    if (known.has(key))
+      (result as unknown as Record<string, string>)[key] = (match[2] ?? match[3]).replace(
+        /\\(.)/g,
+        '$1'
+      );
   }
-
   return result;
 }
 
@@ -215,12 +190,10 @@ export async function registerDynamicClient(
     logger.oauth(`Attempting dynamic client registration: ${registrationEndpoint}`);
 
     // Include custom headers in registration requests
-    const customHeaders = getCustomHeaders();
-    const response = await proxyFetch(registrationEndpoint, {
+    const response = await oauthFetch(registrationEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...customHeaders,
       },
       body: JSON.stringify(registrationRequest),
     });
@@ -289,12 +262,10 @@ export async function exchangeAuthorizationCode(
     }
 
     // Include custom headers in token exchange requests
-    const customHeaders = getCustomHeaders();
-    const response = await proxyFetch(tokenEndpoint, {
+    const response = await oauthFetch(tokenEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        ...customHeaders,
       },
       body: params.toString(),
     });
@@ -307,7 +278,9 @@ export async function exchangeAuthorizationCode(
       );
     }
 
-    const tokenResponse = (await response.json()) as any;
+    const tokenResponse = OAuthTokensSchema.parse(await response.json());
+    if (tokenResponse.token_type.toLowerCase() !== 'bearer')
+      throw new OAuthError('Unsupported token type', 'INVALID_TOKEN_RESPONSE');
 
     // Validate token response
     if (!tokenResponse.access_token) {
@@ -361,7 +334,10 @@ export function buildAuthorizationUrl(
     params.set('resource', resource);
   }
 
-  return `${authorizationEndpoint}?${params.toString()}`;
+  validateOAuthUrl(authorizationEndpoint);
+  const url = new URL(authorizationEndpoint);
+  params.forEach((value, key) => url.searchParams.set(key, value));
+  return url.toString();
 }
 
 /**
