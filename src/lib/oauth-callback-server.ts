@@ -300,7 +300,13 @@ export class OAuthCallbackServer {
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.server = this.app.listen(this.options.port, this.options.host, () => {
+        this.server = this.app.listen(this.options.port, this.options.host, (error?: Error) => {
+          // Express 5 also invokes this callback when binding fails.
+          if (error) {
+            reject(error);
+            return;
+          }
+
           logger.oauth(
             `OAuth callback server listening on http://${this.options.host}:${this.options.port}`
           );
