@@ -81,6 +81,7 @@ describe('OAuth authorization startup', () => {
         authorization_endpoint: 'https://example.com/authorize',
         token_endpoint: 'https://example.com/token',
         response_types_supported: ['code'],
+        code_challenge_methods_supported: ['S256'],
       });
 
     try {

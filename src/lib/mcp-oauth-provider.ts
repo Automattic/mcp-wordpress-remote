@@ -1,19 +1,21 @@
 /**
  * MCP-Compliant OAuth 2.1 Provider
- * Implementation of MCP Authorization specification 2025-06-18
+ * Implementation of MCP Authorization specification 2026-07-28
  */
 
 import open from 'open';
+import lockfile from 'proper-lockfile';
+import { setTimeout as delay } from 'node:timers/promises';
+import { refreshAuthorization } from '@modelcontextprotocol/sdk/client/auth.js';
+import { InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { EventEmitter } from 'node:events';
 import {
   WPTokens,
-  WPClientInfo,
   OAuthError,
   MCPOAuthConfig,
   AuthorizationServerMetadata,
   ProtectedResourceMetadata,
   ClientRegistrationRequest,
-  ClientRegistrationResponse,
   PKCEData,
   WWWAuthenticateHeader,
 } from './oauth-types.js';
@@ -27,13 +29,14 @@ import {
   readTextFile,
   deleteConfigFile,
   isTokenValid,
+  ensureConfigDir,
+  getConfigFilePath,
 } from './persistent-auth-config.js';
 import {
   generatePKCE,
   generateCanonicalResourceURI,
   discoverAuthorizationServerMetadata,
   discoverProtectedResourceMetadata,
-  parseWWWAuthenticateHeader,
   registerDynamicClient,
   exchangeAuthorizationCode,
   buildAuthorizationUrl,
@@ -41,18 +44,27 @@ import {
 } from './mcp-oauth-utils.js';
 import { setupWPOAuthCallbackServer } from './oauth-callback-server.js';
 import { logger } from './utils.js';
-import { CONFIG, getDefaultOAuthScopes, getOAuthCallbackPort, getCustomHeaders } from './config.js';
-import { proxyFetch } from './fetch-utils.js';
+import { CONFIG, getDefaultOAuthScopes } from './config.js';
+import { selectCallbackPort } from './port-utils.js';
+import { oauthFetch } from './oauth-http.js';
 
 /**
  * MCP-compliant OAuth 2.1 Provider for WordPress
  * Implements OAuth 2.1 with PKCE, Resource Indicators, and Dynamic Client Registration
  */
+export interface AuthorizationRequest {
+  rejectedToken?: string;
+  challenge?: WWWAuthenticateHeader;
+  scopes?: string[];
+}
+
 export class MCPOAuthProvider {
   private config: MCPOAuthConfig;
   private serverUrlHash: string;
   private events: EventEmitter;
   private authPromise: Promise<WPTokens> | null = null;
+  private configuredClientId?: string;
+  private explicitScopes: string[];
 
   // OAuth 2.1 flow state
   private currentState: string | null = null;
@@ -64,7 +76,9 @@ export class MCPOAuthProvider {
 
   constructor(options: Partial<MCPOAuthConfig>) {
     const serverUrl = options.serverUrl || CONFIG.WP_API_URL;
-    const defaultScopes = getDefaultOAuthScopes();
+    const defaultScopes = CONFIG.OAUTH_SCOPES ? getDefaultOAuthScopes() : [];
+    this.explicitScopes = options.scopes ?? defaultScopes;
+    this.configuredClientId = options.clientId || CONFIG.WP_OAUTH_CLIENT_ID || undefined;
 
     // Build MCP-compliant configuration
     this.config = {
@@ -127,211 +141,212 @@ export class MCPOAuthProvider {
   /**
    * Discover OAuth 2.1 server endpoints using MCP-compliant discovery
    */
-  private async discoverOAuthEndpoints(): Promise<void> {
-    try {
-      logger.oauth('Starting MCP-compliant OAuth endpoint discovery');
-
-      // Step 1: Try to discover protected resource metadata (RFC 9728)
-      try {
-        this.resourceMetadata = await discoverProtectedResourceMetadata(this.config.resource);
-        logger.oauth('Protected resource metadata discovered');
-      } catch (error) {
-        logger.warn(
-          'Protected resource metadata discovery failed, trying 401 response method',
-          'OAUTH'
-        );
-
-        // Step 2: Try making a request to get WWW-Authenticate header
-        await this.discoverVia401Response();
-      }
-
-      // Step 3: Discover authorization server metadata (RFC 8414)
-      const authServerUrl = this.getAuthorizationServerUrl();
-      if (authServerUrl) {
-        this.authServerMetadata = await discoverAuthorizationServerMetadata(authServerUrl);
-        logger.oauth('Authorization server metadata discovered');
-
-        // Update config with discovered endpoints
-        this.config.authorizationEndpoint = this.authServerMetadata.authorization_endpoint;
-        this.config.tokenEndpoint = this.authServerMetadata.token_endpoint;
-        this.config.registrationEndpoint = this.authServerMetadata.registration_endpoint;
-      } else {
-        throw new OAuthError('Could not determine authorization server URL', 'DISCOVERY_FAILED');
-      }
-    } catch (error) {
-      logger.error('OAuth endpoint discovery failed', 'OAUTH', error);
-      throw error;
-    }
+  private async discoverOAuthEndpoints(challenge?: WWWAuthenticateHeader): Promise<void> {
+    this.resourceMetadata = await discoverProtectedResourceMetadata(
+      this.config.serverUrl,
+      challenge?.resource_metadata
+    );
+    this.authServerMetadata = await discoverAuthorizationServerMetadata(
+      this.resourceMetadata.authorization_servers[0]
+    );
+    this.config.resource = this.resourceMetadata.resource;
+    this.config.authorizationEndpoint = this.authServerMetadata.authorization_endpoint;
+    this.config.tokenEndpoint = this.authServerMetadata.token_endpoint;
+    this.config.registrationEndpoint = this.authServerMetadata.registration_endpoint;
+    this.config.clientId = this.configuredClientId;
+    const challenged = challenge?.scope?.split(/\s+/).filter(Boolean);
+    this.config.scopes = [
+      ...new Set(
+        challenged ??
+          (this.explicitScopes.length
+            ? this.explicitScopes
+            : (this.resourceMetadata.scopes_supported ?? []))
+      ),
+    ];
   }
 
-  /**
-   * Discover endpoints via 401 Unauthorized response (RFC 9728 Section 5.1)
-   */
-  private async discoverVia401Response(): Promise<void> {
-    try {
-      logger.oauth('Attempting discovery via 401 response method');
-
-      // Make an unauthenticated request to trigger 401 with WWW-Authenticate header
-      const customHeaders = getCustomHeaders();
-      const response = await proxyFetch(this.config.serverUrl, {
-        headers: {
-          Accept: 'application/json',
-          ...customHeaders,
-        },
-      });
-
-      if (response.status === 401) {
-        const wwwAuthHeader = response.headers.get('WWW-Authenticate');
-        if (wwwAuthHeader) {
-          const authInfo = parseWWWAuthenticateHeader(wwwAuthHeader);
-          logger.oauth('WWW-Authenticate header parsed successfully');
-
-          if (authInfo.resource_metadata) {
-            // Fetch protected resource metadata from the indicated URL
-            const metadataResponse = await proxyFetch(authInfo.resource_metadata, {
-              headers: {
-                Accept: 'application/json',
-                ...customHeaders,
-              },
-            });
-            if (metadataResponse.ok) {
-              this.resourceMetadata = (await metadataResponse.json()) as ProtectedResourceMetadata;
-              logger.oauth('Protected resource metadata obtained via 401 response');
-            }
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('401 response discovery method failed', 'OAUTH', error);
-      // This is expected to fail sometimes, continue with fallback methods
-    }
-  }
-
-  /**
-   * Get authorization server URL from discovered metadata
-   */
   private getAuthorizationServerUrl(): string | null {
-    if (this.resourceMetadata?.authorization_servers?.length) {
-      // Use first authorization server from metadata
-      return this.resourceMetadata.authorization_servers[0];
-    }
-
-    // Fallback: construct authorization server URL from resource URL
-    try {
-      const url = new URL(this.config.serverUrl);
-      return url.origin;
-    } catch {
-      return null;
-    }
+    return (
+      this.authServerMetadata?.issuer ??
+      this.resourceMetadata?.authorization_servers[0] ??
+      new URL(this.config.serverUrl).origin
+    );
   }
 
   /**
    * Perform dynamic client registration if needed and supported
    */
   private async ensureClientRegistration(): Promise<void> {
+    const issuer = this.getAuthorizationServerUrl()!;
+    const stored = await readClientInfo(this.serverUrlHash);
     if (this.config.clientId) {
-      logger.oauth('Using provided client ID, skipping dynamic registration');
+      if (stored?.issuer && stored.issuer !== issuer && stored.client_id === this.config.clientId) {
+        throw new OAuthError(
+          'Configured client belongs to another authorization server; update its registration',
+          'CLIENT_ISSUER_MISMATCH'
+        );
+      }
+      await writeClientInfo(this.serverUrlHash, { client_id: this.config.clientId, issuer });
       return;
     }
-
-    // Reuse a previously registered client if one is persisted for this server.
-    // Without this, every fresh process with no in-memory clientId would mint a
-    // brand-new DCR client and orphan the prior registration server-side.
-    //
-    // This intentionally runs before the OAUTH_DYNAMIC_REGISTRATION guard: that
-    // flag governs minting a *new* client, not reusing one already obtained. A
-    // persisted client_info.json is only ever written by a prior successful
-    // registration, so reusing it is not "performing registration" and remains
-    // valid even when new registration is disabled.
-    //
-    // The explicit string check (rather than a truthiness check) makes a
-    // corrupt-but-JSON-valid file (e.g. a non-string or empty client_id) fall
-    // through to registration instead of promoting a bad value into the auth URL.
-    const storedClientInfo = await readClientInfo(this.serverUrlHash);
-    if (typeof storedClientInfo?.client_id === 'string' && storedClientInfo.client_id.length > 0) {
-      this.config.clientId = storedClientInfo.client_id;
-      logger.oauth('Reusing persisted client registration, skipping dynamic registration');
+    if (
+      stored?.issuer === issuer &&
+      typeof stored.client_id === 'string' &&
+      stored.client_id.length > 0
+    ) {
+      this.config.clientId = stored.client_id;
       return;
     }
-
-    if (!CONFIG.OAUTH_DYNAMIC_REGISTRATION) {
+    if (!CONFIG.OAUTH_DYNAMIC_REGISTRATION)
       throw new OAuthError(
-        'No client ID provided and dynamic registration is disabled',
+        'No issuer-bound client registration; configure a client ID or enable registration',
         'NO_CLIENT_ID'
       );
-    }
-
-    if (!this.authServerMetadata?.registration_endpoint) {
+    if (!this.authServerMetadata?.registration_endpoint)
       throw new OAuthError(
-        'Dynamic client registration not supported by authorization server',
+        'Authorization server does not support dynamic registration; configure its client ID',
         'NO_DYNAMIC_REGISTRATION'
       );
-    }
-
-    try {
-      logger.oauth('Performing dynamic client registration');
-
-      const registrationRequest: ClientRegistrationRequest = {
-        redirect_uris: [this.config.redirectUri],
-        token_endpoint_auth_method: 'none', // Public client
-        grant_types: ['authorization_code'],
-        response_types: ['code'],
-        client_name: 'WordPress MCP Remote',
-        scope: this.config.scopes.join(' '),
-      };
-
-      const registrationResponse = await registerDynamicClient(
-        this.authServerMetadata.registration_endpoint,
-        registrationRequest
-      );
-
-      // Store client information
-      const clientInfo: WPClientInfo = {
-        client_id: registrationResponse.client_id,
-        client_secret: registrationResponse.client_secret,
-      };
-
-      await writeClientInfo(this.serverUrlHash, clientInfo);
-      this.config.clientId = registrationResponse.client_id;
-
-      logger.oauth('Dynamic client registration completed successfully');
-    } catch (error) {
-      logger.error('Dynamic client registration failed', 'OAUTH', error);
-      throw error;
-    }
+    const request: ClientRegistrationRequest = {
+      redirect_uris: [this.config.redirectUri],
+      application_type: 'native',
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      client_name: 'WordPress MCP Remote',
+      ...(this.config.scopes.length ? { scope: this.config.scopes.join(' ') } : {}),
+    };
+    const registered = await registerDynamicClient(
+      this.authServerMetadata.registration_endpoint,
+      request
+    );
+    await writeClientInfo(this.serverUrlHash, {
+      ...request,
+      client_id: registered.client_id,
+      issuer,
+    });
+    this.config.clientId = registered.client_id;
   }
 
   /**
    * Initiate MCP-compliant OAuth 2.1 authorization flow
    */
-  async authorize(): Promise<void> {
-    // If authorization is already in progress, wait for it
-    if (this.authPromise) {
-      logger.oauth('Authorization already in progress, waiting...');
-      await this.authPromise;
-      return;
-    }
+  private satisfies(tokens: WPTokens | null, request: AuthorizationRequest): tokens is WPTokens {
+    return (
+      !!tokens &&
+      tokens.access_token !== request.rejectedToken &&
+      (!request.scopes?.length ||
+        request.scopes.every(scope => tokens.scope?.split(' ').includes(scope)))
+    );
+  }
 
-    // Check if we already have valid tokens
-    const existingTokens = await this.tokens();
-    if (existingTokens) {
-      logger.oauth('Already have valid tokens, skipping authorization');
-      return;
-    }
-
-    logger.oauth('Starting MCP-compliant OAuth 2.1 authorization flow');
-
-    this.authPromise = this.performAuthorization();
-
+  async authorize(request: AuthorizationRequest = {}): Promise<void> {
+    if (this.authPromise) await this.authPromise;
+    if (!this.authPromise) this.authPromise = this.authorizeWithLock(request);
+    const pending = this.authPromise;
     try {
-      await this.authPromise;
-      logger.oauth('OAuth 2.1 authorization completed successfully');
-    } catch (error) {
-      logger.error('OAuth 2.1 authorization failed', 'OAUTH', error);
-      throw error;
+      await pending;
     } finally {
-      this.authPromise = null;
+      if (this.authPromise === pending) this.authPromise = null;
     }
+  }
+
+  private async authorizeWithLock(request: AuthorizationRequest): Promise<WPTokens> {
+    const valid = await this.tokens();
+    if (this.satisfies(valid, request)) return valid;
+    await ensureConfigDir();
+    const file = getConfigFilePath(this.serverUrlHash, 'oauth');
+    let release: () => Promise<void>;
+    try {
+      release = await lockfile.lock(file, { realpath: false });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ELOCKED') throw error;
+      const deadline = Date.now() + this.config.timeout;
+      while (Date.now() < deadline) {
+        const tokens = await this.tokens();
+        if (this.satisfies(tokens, request)) return tokens;
+        if (!(await lockfile.check(file, { realpath: false }))) {
+          const completed = await this.tokens();
+          if (this.satisfies(completed, request)) return completed;
+          throw new OAuthError('Authentication in another process did not complete', 'AUTH_FAILED');
+        }
+        await delay(Math.min(100, Math.max(0, deadline - Date.now())));
+      }
+      throw new OAuthError('Timeout waiting for authentication in another process', 'LOCK_TIMEOUT');
+    }
+    try {
+      const completed = await this.tokens();
+      if (this.satisfies(completed, request)) return completed;
+      await this.discoverOAuthEndpoints(request.challenge);
+      const issuer = this.getAuthorizationServerUrl()!;
+      const stored = await readTokens(this.serverUrlHash);
+      const client = await readClientInfo(this.serverUrlHash);
+      if (
+        this.configuredClientId &&
+        client?.issuer &&
+        client.issuer !== issuer &&
+        client.client_id === this.configuredClientId
+      ) {
+        throw new OAuthError(
+          'Configured client belongs to another authorization server',
+          'CLIENT_ISSUER_MISMATCH'
+        );
+      }
+      this.config.scopes = [
+        ...new Set([
+          ...(stored?.issuer === issuer ? (stored.scope?.split(' ').filter(Boolean) ?? []) : []),
+          ...this.config.scopes,
+          ...(request.scopes ?? []),
+        ]),
+      ];
+      const needsScope = !!request.scopes?.some(
+        scope => !stored?.scope?.split(' ').includes(scope)
+      );
+      const clientId = this.configuredClientId || client?.client_id;
+      if (
+        stored?.issuer === issuer &&
+        client?.issuer === issuer &&
+        stored.refresh_token &&
+        clientId &&
+        (!this.configuredClientId || this.configuredClientId === client.client_id) &&
+        !needsScope
+      ) {
+        try {
+          const renewed = await refreshAuthorization(issuer, {
+            metadata: { ...this.authServerMetadata! },
+            clientInformation: { client_id: clientId },
+            refreshToken: stored.refresh_token,
+            resource: this.resourceIndicator(),
+            fetchFn: (url, init) => oauthFetch(String(url), init),
+          });
+          if (renewed.token_type.toLowerCase() !== 'bearer')
+            throw new OAuthError('Unsupported token type', 'INVALID_TOKEN_RESPONSE');
+          const tokens = {
+            ...renewed,
+            issuer,
+            scope: renewed.scope ?? stored.scope,
+            obtained_at: Date.now(),
+          };
+          await writeTokens(this.serverUrlHash, tokens);
+          return tokens;
+        } catch (error) {
+          if (!(error instanceof InvalidGrantError)) throw error;
+          await deleteConfigFile(this.serverUrlHash, 'tokens.json');
+        }
+      }
+      return await this.performAuthorization();
+    } finally {
+      await release();
+    }
+  }
+
+  private resourceIndicator(): string {
+    if (!CONFIG.OAUTH_RESOURCE_INDICATOR)
+      throw new OAuthError(
+        'MCP OAuth requires resource indicators; remove OAUTH_RESOURCE_INDICATOR=false',
+        'RESOURCE_REQUIRED'
+      );
+    return this.config.resource;
   }
 
   /**
@@ -340,14 +355,29 @@ export class MCPOAuthProvider {
   private async performAuthorization(): Promise<WPTokens> {
     try {
       // Step 1: Discover OAuth endpoints
-      await this.discoverOAuthEndpoints();
+      if (!this.authServerMetadata) await this.discoverOAuthEndpoints();
+      if (!this.authServerMetadata?.code_challenge_methods_supported?.includes('S256'))
+        throw new OAuthError(
+          'Authorization server must advertise PKCE S256 support',
+          'PKCE_REQUIRED'
+        );
+      this.resourceIndicator();
+      if (!['127.0.0.1', 'localhost', '::1'].includes(this.config.host))
+        throw new OAuthError(
+          'Native OAuth callback must bind to loopback',
+          'INVALID_CALLBACK_HOST'
+        );
+      this.currentPKCE = generatePKCE();
+      this.currentState = generateSecureState();
 
       // Step 2: Set up callback server with smart port selection. This must
       // happen before client registration: DCR registers this.config.redirectUri
       // as the client's allowed redirect, so registration needs the real
       // selected port too, not the pre-selection port-0 placeholder.
       const callbackPort =
-        this.config.callbackPort === 0 ? await getOAuthCallbackPort() : this.config.callbackPort;
+        this.config.callbackPort === 0
+          ? await selectCallbackPort(this.config.serverUrl, undefined, false, this.config.host)
+          : this.config.callbackPort;
 
       const callbackServer = setupWPOAuthCallbackServer(
         {
@@ -355,6 +385,9 @@ export class MCPOAuthProvider {
           host: this.config.host,
           serverUrlHash: this.serverUrlHash,
           timeout: this.config.timeout,
+          state: this.currentState,
+          issuer: this.authServerMetadata.issuer,
+          requireIssuer: this.authServerMetadata.authorization_response_iss_parameter_supported,
         },
         this.events
       );
@@ -365,15 +398,13 @@ export class MCPOAuthProvider {
       // Always release the callback port, so a failed attempt does not block the next one.
       try {
         // Update redirect URI with the actual port used
-        const actualRedirectUri = `http://${this.config.host}:${callbackPort}/oauth/callback`;
+        const actualRedirectUri = `http://${this.config.host === '::1' ? '[::1]' : this.config.host}:${callbackPort}/oauth/callback`;
         this.config.redirectUri = actualRedirectUri;
 
         // Step 3: Ensure we have a client ID (via registration if needed)
         await this.ensureClientRegistration();
 
         // Step 4: Generate PKCE parameters (required for OAuth 2.1)
-        this.currentPKCE = generatePKCE();
-        this.currentState = generateSecureState();
 
         // Store PKCE verifier for later use
         await writeTextFile(this.serverUrlHash, 'pkce_verifier.txt', this.currentPKCE.codeVerifier);
@@ -387,13 +418,15 @@ export class MCPOAuthProvider {
           this.config.scopes,
           this.currentState,
           this.currentPKCE.codeChallenge,
-          CONFIG.OAUTH_RESOURCE_INDICATOR ? this.config.resource : undefined
+          this.resourceIndicator()
         );
 
         logger.oauth('Built OAuth 2.1 authorization URL');
         logger.debug('Authorization URL', 'OAUTH', { url: authUrl });
 
         // Step 6: Open browser for user authorization
+        const authorizationCode = this.waitForAuthorizationCode();
+        void authorizationCode.catch(() => {});
         try {
           await open(authUrl);
           logger.oauth('Browser opened successfully');
@@ -406,10 +439,15 @@ export class MCPOAuthProvider {
         }
 
         // Step 7: Wait for authorization code
-        const authCode = await this.waitForAuthorizationCode();
+        const authCode = await authorizationCode;
 
         // Step 8: Exchange authorization code for access token
-        const tokens = await this.exchangeCodeForTokens(authCode, actualRedirectUri);
+        const response = await this.exchangeCodeForTokens(authCode, actualRedirectUri);
+        const tokens = {
+          ...response,
+          issuer: this.getAuthorizationServerUrl()!,
+          scope: response.scope ?? this.config.scopes.join(' '),
+        };
 
         // Step 9: Store tokens
         await writeTokens(this.serverUrlHash, tokens);
@@ -418,6 +456,8 @@ export class MCPOAuthProvider {
         return tokens;
       } finally {
         await callbackServer.stop();
+        await deleteConfigFile(this.serverUrlHash, 'pkce_verifier.txt');
+        await deleteConfigFile(this.serverUrlHash, 'oauth_state.txt');
       }
     } catch (error) {
       logger.error('Error during OAuth 2.1 authorization flow', 'OAUTH', error);
@@ -441,7 +481,7 @@ export class MCPOAuthProvider {
         clearTimeout(timeout);
       };
 
-      this.events.once('oauth-code-received', async ({ code, state }) => {
+      this.events.once('oauth-code-received', async ({ code, state, iss }) => {
         cleanup();
 
         // Validate state parameter
@@ -450,6 +490,14 @@ export class MCPOAuthProvider {
           return;
         }
 
+        if (
+          (iss !== undefined ||
+            this.authServerMetadata?.authorization_response_iss_parameter_supported) &&
+          iss !== this.authServerMetadata?.issuer
+        ) {
+          reject(new OAuthError('Authorization response issuer mismatch', 'INVALID_ISSUER'));
+          return;
+        }
         logger.oauth('Valid authorization code received');
         resolve(code);
       });
@@ -481,7 +529,7 @@ export class MCPOAuthProvider {
         redirectUri,
         this.config.clientId!,
         codeVerifier,
-        CONFIG.OAUTH_RESOURCE_INDICATOR ? this.config.resource : undefined
+        this.resourceIndicator()
       );
 
       // Clean up temporary files

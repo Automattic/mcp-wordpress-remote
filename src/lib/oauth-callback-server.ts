@@ -1,7 +1,3 @@
-/**
- * OAuth callback server for WordPress implicit flow
- */
-
 import express from 'express';
 import { Server } from 'node:http';
 import { EventEmitter } from 'node:events';
@@ -11,7 +7,7 @@ import { logger } from './utils.js';
 
 /**
  * HTML page for handling OAuth 2.1 authorization code callback
- * Updated for MCP Authorization specification 2025-06-18 compliance
+ * Supports isolated authorization-code and legacy implicit callbacks
  */
 const AUTHORIZATION_CODE_HTML = `
 <!DOCTYPE html>
@@ -86,110 +82,26 @@ const AUTHORIZATION_CODE_HTML = `
     </div>
 
     <script>
-        function displayStatus(message, type = 'loading') {
-            const statusEl = document.getElementById('status');
-            const spinnerEl = document.getElementById('spinner');
-            
-            statusEl.textContent = message;
-            statusEl.className = type;
-            
-            if (type !== 'loading') {
-                spinnerEl.style.display = 'none';
-            }
-        }
-
-        function displayDetails(message) {
-            document.getElementById('details').textContent = message;
-        }
-
-        // Handle both OAuth 2.1 authorization code flow and implicit flow
-        const urlParams = new URLSearchParams(window.location.search);
-        const hashParams = new URLSearchParams(window.location.hash.substring(1));
-
-        // Check for authorization code first (OAuth 2.1 flow)
-        if (urlParams.has('code')) {
-            const authData = {
-                code: urlParams.get('code'),
-                state: urlParams.get('state'),
-                // Additional parameters for validation
-                iss: urlParams.get('iss'),
-            };
-
-            // Send authorization code to server for token exchange
-            fetch('/oauth/callback', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(authData)
-            })
-            .then(response => {
-                if (response.ok) {
-                    displayStatus('✅ Authorization successful!', 'success');
-                    displayDetails('You can safely close this window.');
-                } else {
-                    return response.json().then(err => {
-                        throw new Error(err.error || 'Failed to exchange authorization code');
-                    });
-                }
-            })
-            .catch(error => {
-                displayStatus('❌ Error completing authorization', 'error');
-                displayDetails(error.message + '. Please try again.');
-            });
-        } 
-        // Check for access token in URL fragment (implicit flow)
-        else if (hashParams.has('access_token')) {
-            const tokens = {
-                access_token: hashParams.get('access_token'),
-                token_type: hashParams.get('token_type') || 'Bearer',
-                expires_in: hashParams.get('expires_in') ? parseInt(hashParams.get('expires_in')) : 3600,
-                scope: hashParams.get('scope'),
-                state: hashParams.get('state'),
-                obtained_at: Date.now()
-            };
-
-            // Send tokens to server for storage
-            fetch('/oauth/tokens', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(tokens)
-            })
-            .then(response => {
-                if (response.ok) {
-                    displayStatus('✅ Authorization successful!', 'success');
-                    displayDetails('You can safely close this window.');
-                } else {
-                    return response.json().then(err => {
-                        throw new Error(err.error || 'Failed to store access token');
-                    });
-                }
-            })
-            .catch(error => {
-                displayStatus('❌ Error completing authorization', 'error');
-                displayDetails(error.message + '. Please try again.');
-            });
-        } 
-        // Check for errors in query parameters
-        else if (urlParams.has('error')) {
-            const error = urlParams.get('error');
-            const errorDescription = urlParams.get('error_description');
-            displayStatus('❌ Authorization failed', 'error');
-            displayDetails(\`Error: \${error}\${errorDescription ? ' - ' + errorDescription : ''}\`);
-        } 
-        // Check for errors in URL fragment (implicit flow errors)
-        else if (hashParams.has('error')) {
-            const error = hashParams.get('error');
-            const errorDescription = hashParams.get('error_description');
-            displayStatus('❌ Authorization failed', 'error');
-            displayDetails(\`Error: \${error}\${errorDescription ? ' - ' + errorDescription : ''}\`);
-        } 
-        // No authorization code or access token found
-        else {
-            displayStatus('❌ No authorization code or access token received', 'error');
-            displayDetails('Please try the authorization process again.');
+        const query = new URLSearchParams(window.location.search);
+        const fragment = new URLSearchParams(window.location.hash.substring(1));
+        const status = document.getElementById('status');
+        const details = document.getElementById('details');
+        const data = Object.fromEntries(query.has('code') || query.has('error') ? query : fragment);
+        const endpoint = data.access_token ? '/oauth/tokens' : '/oauth/callback';
+        if (data.code || data.error || data.access_token) {
+            fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+                .then(async response => {
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Authorization response was rejected');
+                    status.textContent = data.access_token ? 'Authorization successful' : 'Authorization code received';
+                    status.className = 'success';
+                    details.textContent = data.access_token ? 'You can close this window.' : 'Return to your app to check the connection. Token exchange may still fail.';
+                })
+                .catch(error => { status.textContent = 'Authorization failed'; status.className = 'error'; details.textContent = error.message; })
+                .finally(() => { document.getElementById('spinner').style.display = 'none'; });
+        } else {
+            status.textContent = 'No authorization response received';
+            document.getElementById('spinner').style.display = 'none';
         }
     </script>
 </body>
@@ -201,6 +113,7 @@ export class OAuthCallbackServer {
   private server: Server | null = null;
   private events: EventEmitter;
   private options: OAuthCallbackServerOptions;
+  private startupTimer?: ReturnType<typeof setTimeout>;
 
   constructor(options: OAuthCallbackServerOptions, events: EventEmitter) {
     this.options = options;
@@ -211,6 +124,17 @@ export class OAuthCallbackServer {
 
   private setupRoutes(): void {
     // Parse JSON bodies
+    this.app.use((req, res, next) => {
+      const host = this.options.host === '::1' ? '[::1]' : this.options.host;
+      const origin = req.headers.origin;
+      const port = this.server?.address();
+      const expectedOrigin = `http://${host}:${port && typeof port !== 'string' ? port.port : this.options.port}`;
+      if (req.hostname !== host || (origin && origin !== expectedOrigin)) {
+        res.status(403).json({ error: 'Untrusted callback origin' });
+        return;
+      }
+      next();
+    });
     this.app.use(express.json());
 
     // Serve the authorization code callback page
@@ -222,60 +146,54 @@ export class OAuthCallbackServer {
     // Handle authorization code from OAuth 2.1 flow
     this.app.post('/oauth/callback', async (req, res) => {
       try {
-        const { code, state, iss } = req.body;
-
-        if (!code) {
-          throw new OAuthError('No authorization code received');
-        }
-
-        logger.oauth('OAuth 2.1 authorization code received');
-        logger.debug('Authorization code details', 'OAUTH', {
-          codeLength: code.length,
-          state: state || 'none',
-          issuer: iss || 'none',
-        });
-
-        // Emit authorization code event for processing
+        const { code, state, iss, error } = req.body;
+        this.validateResponse(state, iss);
+        if (error) throw new OAuthError('Authorization denied or failed', 'AUTH_DENIED');
+        if (this.options.flow === 'implicit')
+          throw new OAuthError('Authorization-code callback is disabled', 'WRONG_FLOW');
+        if (typeof code !== 'string' || !code)
+          throw new OAuthError('No authorization code received', 'INVALID_CODE');
         this.events.emit('oauth-code-received', { code, state, iss });
-
-        res.json({ success: true, message: 'Authorization code received successfully' });
+        res.json({
+          success: true,
+          message: 'Authorization code received; check connection status in the app',
+        });
       } catch (error) {
-        logger.error('Error processing authorization code', 'OAUTH', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.events.emit('oauth-error', new OAuthError(errorMessage));
-        res.status(400).json({ error: errorMessage });
+        const failure =
+          error instanceof OAuthError ? error : new OAuthError('Invalid authorization response');
+        if (failure.code !== 'INVALID_STATE') this.events.emit('oauth-error', failure);
+        res.status(400).json({ error: failure.message });
       }
     });
 
-    // Legacy endpoint for backward compatibility (tokens endpoint for implicit flow)
     this.app.post('/oauth/tokens', async (req, res) => {
+      if (this.options.flow !== 'implicit') {
+        res.status(404).json({ error: 'Implicit token callback is disabled' });
+        return;
+      }
       try {
-        const tokens = req.body as WPTokens;
-
-        if (!tokens.access_token) {
-          throw new OAuthError('No access token received');
-        }
-
-        logger.oauth('Legacy OAuth tokens received (implicit flow)');
-        logger.debug('Token details', 'OAUTH', {
-          tokenType: tokens.token_type,
-          expiresIn: tokens.expires_in,
-          scope: tokens.scope,
-          tokenLength: tokens.access_token.length,
-        });
-
-        // Store the tokens
+        this.validateResponse(req.body.state, req.body.iss);
+        if (
+          typeof req.body.access_token !== 'string' ||
+          !req.body.access_token ||
+          (req.body.token_type && req.body.token_type.toLowerCase() !== 'bearer')
+        )
+          throw new OAuthError('Invalid implicit token response');
+        const tokens: WPTokens = {
+          access_token: req.body.access_token,
+          token_type: 'Bearer',
+          expires_in: req.body.expires_in === undefined ? undefined : Number(req.body.expires_in),
+          scope: req.body.scope,
+          obtained_at: Date.now(),
+        };
         await writeTokens(this.options.serverUrlHash, tokens);
-
-        // Emit success event
         this.events.emit('oauth-success', tokens);
-
-        res.json({ success: true, message: 'Tokens saved successfully' });
+        res.json({ success: true });
       } catch (error) {
-        logger.error('Error processing OAuth tokens', 'OAUTH', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.events.emit('oauth-error', new OAuthError(errorMessage));
-        res.status(400).json({ error: errorMessage });
+        const failure =
+          error instanceof OAuthError ? error : new OAuthError('Invalid implicit response');
+        if (failure.code !== 'INVALID_STATE') this.events.emit('oauth-error', failure);
+        res.status(400).json({ error: failure.message });
       }
     });
 
@@ -297,10 +215,18 @@ export class OAuthCallbackServer {
     );
   }
 
+  private validateResponse(state: unknown, issuer: unknown): void {
+    if (!this.options.state || state !== this.options.state)
+      throw new OAuthError('Invalid callback state', 'INVALID_STATE');
+    if ((issuer !== undefined || this.options.requireIssuer) && issuer !== this.options.issuer)
+      throw new OAuthError('Invalid callback issuer', 'INVALID_ISSUER');
+  }
+
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
         this.server = this.app.listen(this.options.port, this.options.host, (error?: Error) => {
+          clearTimeout(this.startupTimer);
           // Express 5 also invokes this callback when binding fails.
           if (error) {
             reject(error);
@@ -314,13 +240,14 @@ export class OAuthCallbackServer {
         });
 
         this.server.on('error', (error: Error) => {
+          clearTimeout(this.startupTimer);
           logger.error('OAuth callback server error', 'OAUTH', error);
           reject(error);
         });
 
         // Set timeout for server startup
         if (this.options.timeout) {
-          setTimeout(() => {
+          this.startupTimer = setTimeout(() => {
             if (!this.server?.listening) {
               reject(new OAuthError('OAuth callback server startup timeout', 'TIMEOUT'));
             }
@@ -333,18 +260,12 @@ export class OAuthCallbackServer {
   }
 
   async stop(): Promise<void> {
+    clearTimeout(this.startupTimer);
     if (!this.server) return;
     const server = this.server;
     this.server = null;
 
-    // Fire-and-forget. By the time stop() is called we already have the auth
-    // code and persisted tokens, so the callback server has no further role.
-    // Waiting for http.Server.close()'s callback would gate MCP initialization
-    // on every socket draining, and browsers hold the OAuth callback socket
-    // via HTTP/1.1 keep-alive for up to ~60s — long enough to trip the MCP
-    // client's 30s connect timeout on the very first run. Initiate close
-    // and force-sever remaining sockets; logging happens when the callback
-    // eventually fires in the background.
+    // Browser keep-alive sockets must not delay MCP initialization when the listener closes.
     server.close(err => {
       if (err) logger.error('OAuth callback server close error', 'OAUTH', err);
       else logger.oauth('OAuth callback server stopped');

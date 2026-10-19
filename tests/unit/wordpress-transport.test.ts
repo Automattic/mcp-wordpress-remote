@@ -101,7 +101,16 @@ describe('WordPress transport rejected OAuth token', () => {
       token_type: 'bearer',
       obtained_at: Date.now(),
     });
-    // Stands in for the sign-in that runs when no stored token is left.
+    const { MCPOAuthProvider } = await import('../../src/lib/mcp-oauth-provider.js');
+    jest.spyOn(MCPOAuthProvider.prototype, 'authorize').mockImplementation(async () => {
+      const tokens = await auth.readTokens(serverUrlHash);
+      if (tokens?.access_token === 'stored-token')
+        await auth.writeTokens(serverUrlHash, {
+          access_token: 'new-token',
+          token_type: 'Bearer',
+          obtained_at: Date.now(),
+        });
+    });
     jest.spyOn(api, 'getWordPressHeaders').mockImplementation(async () => {
       const tokens = await auth.readTokens(serverUrlHash);
       return { Authorization: `Bearer ${tokens ? tokens.access_token : 'new-token'}` };
@@ -122,7 +131,7 @@ describe('WordPress transport rejected OAuth token', () => {
     return { auth, serverUrlHash, network, failures, received, transport, sentAuthorization };
   }
 
-  it('deletes the rejected token and retries once with a new sign-in', async () => {
+  it('recovers the rejected token and retries once with its replacement', async () => {
     const { auth, serverUrlHash, failures, received, transport, sentAuthorization } = await setup([
       rejected,
       accepted,
@@ -130,7 +139,7 @@ describe('WordPress transport rejected OAuth token', () => {
     try {
       await transport.send(initialize);
       expect(sentAuthorization()).toEqual(['Bearer stored-token', 'Bearer new-token']);
-      expect(await auth.readTokens(serverUrlHash)).toBeNull();
+      expect((await auth.readTokens(serverUrlHash))?.access_token).toBe('new-token');
       expect(failures).toEqual([]);
       expect(received).toEqual([
         { jsonrpc: '2.0', id: 0, result: { protocolVersion: '2025-11-25' } },
@@ -191,7 +200,7 @@ describe('WordPress transport rejected OAuth token', () => {
   it('does not retry a request cancelled while the rejected token is discarded', async () => {
     const api = await import('../../src/lib/wordpress-api.js');
     const { transport, sentAuthorization } = await setup([rejected, accepted]);
-    jest.spyOn(api, 'discardRejectedOAuthToken').mockImplementation(async () => {
+    jest.spyOn(api, 'recoverOAuthAuthorization').mockImplementation(async () => {
       transport.cancelRequest(5);
       return true;
     });
@@ -209,7 +218,7 @@ describe('WordPress transport rejected OAuth token', () => {
     }
   });
 
-  it('keeps the stored token when the rejected request used a different one', async () => {
+  it('retries with the newer stored token when an older token was rejected', async () => {
     const { auth, serverUrlHash, transport, sentAuthorization } = await setup([rejected]);
     await auth.writeTokens(serverUrlHash, {
       access_token: 'newer-token',
@@ -218,10 +227,11 @@ describe('WordPress transport rejected OAuth token', () => {
     });
     jest
       .spyOn(await import('../../src/lib/wordpress-api.js'), 'getWordPressHeaders')
-      .mockResolvedValue({ Authorization: 'Bearer stored-token' });
+      .mockResolvedValueOnce({ Authorization: 'Bearer stored-token' })
+      .mockResolvedValueOnce({ Authorization: 'Bearer newer-token' });
     try {
       await transport.send(initialize).catch(() => {});
-      expect(sentAuthorization()).toEqual(['Bearer stored-token']);
+      expect(sentAuthorization()).toEqual(['Bearer stored-token', 'Bearer newer-token']);
       expect((await auth.readTokens(serverUrlHash))?.access_token).toBe('newer-token');
     } finally {
       await transport.close();
@@ -333,6 +343,125 @@ describe('WordPress transport released response bodies', () => {
       expect(failures).toEqual([]);
     } finally {
       jest.restoreAllMocks();
+    }
+  });
+});
+
+describe('WordPress transport scope authorization limits', () => {
+  let restoreTimeout: string | undefined;
+  beforeEach(() => {
+    restoreTimeout = process.env.WP_API_INIT_TIMEOUT_MS;
+    process.env.WP_API_INIT_TIMEOUT_MS = '20';
+    jest.resetModules();
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (restoreTimeout === undefined) delete process.env.WP_API_INIT_TIMEOUT_MS;
+    else process.env.WP_API_INIT_TIMEOUT_MS = restoreTimeout;
+  });
+
+  async function setup() {
+    const api = await import('../../src/lib/wordpress-api.js');
+    jest.spyOn(api, 'getWordPressHeaders').mockResolvedValue({ Authorization: 'Bearer fixture' });
+    const recover = jest.spyOn(api, 'recoverOAuthAuthorization').mockResolvedValue(true);
+    const fetch = await import('../../src/lib/fetch-utils.js');
+    const network = jest.spyOn(fetch, 'proxyFetch');
+    const failures: Error[] = [];
+    const transport = (
+      await import('../../src/lib/wordpress-transport.js')
+    ).createWordPressTransport((_message, error) => failures.push(error));
+    transport.onerror = () => {};
+    await transport.start();
+    return { recover, network, failures, transport };
+  }
+
+  it('does not repeat identical scope challenges or exceed two upgrades per operation', async () => {
+    const c = await setup();
+    let scope = 'write';
+    c.network.mockImplementation(
+      async () =>
+        new Response('forbidden', {
+          status: 403,
+          headers: { 'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${scope}"` },
+        }) as any
+    );
+    const send = () =>
+      c.transport
+        .send({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'fixture', arguments: {} },
+        })
+        .catch(() => {});
+    try {
+      await send();
+      expect(c.recover).toHaveBeenCalledTimes(1);
+      await send();
+      expect(c.recover).toHaveBeenCalledTimes(1);
+      scope = 'admin';
+      await send();
+      expect(c.recover).toHaveBeenCalledTimes(2);
+      scope = 'sites:write';
+      await send();
+      expect(c.recover).toHaveBeenCalledTimes(2);
+    } finally {
+      await c.transport.close();
+    }
+  });
+
+  it('pauses the HTTP deadline during consent without losing client cancellation', async () => {
+    const c = await setup();
+    c.network.mockResolvedValue(
+      new Response('forbidden', {
+        status: 403,
+        headers: { 'WWW-Authenticate': 'Bearer error="insufficient_scope", scope="write"' },
+      }) as any
+    );
+    c.recover.mockImplementation(async () => {
+      c.transport.cancelRequest(5);
+      await new Promise(resolve => setTimeout(resolve, 40));
+      return true;
+    });
+    try {
+      await c.transport.send({
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/call',
+        params: { name: 'fixture' },
+      });
+      expect(c.network).toHaveBeenCalledTimes(1);
+      expect(c.failures).toEqual([]);
+    } finally {
+      await c.transport.close();
+    }
+  });
+
+  it('allows consent longer than the request deadline and retries successfully', async () => {
+    const c = await setup();
+    c.recover.mockImplementation(async () => {
+      await new Promise(resolve => setTimeout(resolve, 40));
+      return true;
+    });
+    c.network
+      .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }) as any)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: 0, result: { protocolVersion: '2025-11-25' } }),
+          { headers: { 'Content-Type': 'application/json' } }
+        ) as any
+      );
+    try {
+      await c.transport.send({
+        jsonrpc: '2.0',
+        id: 0,
+        method: 'initialize',
+        params: { protocolVersion: '2025-11-25' },
+      });
+      expect(c.network).toHaveBeenCalledTimes(2);
+      expect(c.failures).toEqual([]);
+    } finally {
+      await c.transport.close();
     }
   });
 });

@@ -2,7 +2,6 @@
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { logger, setupSignalHandlers } from './lib/utils.js';
-import { cleanupExpiredTokens } from './lib/persistent-auth-config.js';
 import { validateNodeVersion } from './lib/node-utils.js';
 import { setupFetchPolyfill } from './lib/fetch-utils.js';
 import { createWordPressTransport } from './lib/wordpress-transport.js';
@@ -12,11 +11,6 @@ validateNodeVersion(18);
 
 async function WordPressProxy() {
   await setupFetchPolyfill();
-  try {
-    await cleanupExpiredTokens();
-  } catch (error) {
-    logger.warn('Error cleaning up expired tokens', 'PROXY', error);
-  }
 
   const local = new StdioServerTransport();
   let bridge: Awaited<ReturnType<typeof startPassThrough>> | undefined;

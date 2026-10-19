@@ -19,14 +19,17 @@ type OAuthClientInfo = z.infer<typeof OAuthClientInfoSchema>;
  * @param preferredPort Optional preferred port to try first
  * @returns A promise that resolves to an available port number
  */
-export async function findAvailablePort(preferredPort?: number): Promise<number> {
+export async function findAvailablePort(
+  preferredPort?: number,
+  host = '127.0.0.1'
+): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
 
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
         // If preferred port is in use, get a random port
-        server.listen(0);
+        server.listen(0, host);
       } else {
         reject(err);
       }
@@ -40,7 +43,7 @@ export async function findAvailablePort(preferredPort?: number): Promise<number>
     });
 
     // Try preferred port first, or get a random port
-    server.listen(preferredPort || 0);
+    server.listen(preferredPort || 0, host);
   });
 }
 
@@ -106,7 +109,8 @@ export function getServerUrlHash(serverUrl: string): string {
 export async function selectCallbackPort(
   serverUrl: string,
   specifiedPort?: number,
-  _unused?: boolean
+  _unused?: boolean,
+  host = '127.0.0.1'
 ): Promise<number> {
   const serverUrlHash = getServerUrlHash(serverUrl);
 
@@ -115,18 +119,6 @@ export async function selectCallbackPort(
     return specifiedPort;
   }
 
-  // Try to find existing client port or calculate a default
-  const defaultPort = calculateDefaultPort(serverUrlHash);
-  const [existingClientPort, availablePort] = await Promise.all([
-    findExistingClientPort(serverUrlHash),
-    findAvailablePort(defaultPort),
-  ]);
-
-  // Prefer existing client port for consistency
-  if (existingClientPort) {
-    return existingClientPort;
-  }
-
-  // Use automatically selected port
-  return availablePort;
+  const existingClientPort = await findExistingClientPort(serverUrlHash);
+  return findAvailablePort(existingClientPort ?? calculateDefaultPort(serverUrlHash), host);
 }

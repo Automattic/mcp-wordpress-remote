@@ -6,7 +6,7 @@ Connect AI assistants like Claude Desktop to your WordPress sites with multiple 
 
 ## Features
 
-- **MCP Authorization Specification Compliant** - Implements MCP Authorization specification 2025-06-18
+- **MCP OAuth Client** - Authorization-code PKCE, validated discovery, issuer-bound credentials, and coordinated renewal
 - **OAuth 2.1 with PKCE** - Secure authorization code flow with PKCE (RFC 7636)
 - **Resource Indicators** - RFC 8707 compliance for token audience binding
 - **Dynamic Client Registration** - RFC 7591 support for automatic client registration
@@ -154,9 +154,9 @@ Tool-call hooks and `wpRequest` from the `/lib` bundle share the live authentica
 
 ## Authentication Methods
 
-### 1. OAuth 2.1 (Recommended - MCP Compliant)
+### 1. OAuth 2.1 (Recommended)
 
-OAuth 2.1 provides the most secure and user-friendly experience with full MCP Authorization specification compliance.
+OAuth 2.1 uses a public native client with PKCE S256, validated MCP discovery, and coordinated token renewal. See [OAuth client behavior](Docs/authentication.md) for the supported profile, migration behavior, and optional features.
 
 #### **For Self-Hosted WordPress Sites:**
 
@@ -185,9 +185,9 @@ OAuth 2.1 provides the most secure and user-friendly experience with full MCP Au
 
 **Benefits:**
 
-- Full compliance with MCP Authorization specification 2025-06-18
+- Public native-client authorization following the MCP 2026-07-28 authorization requirements
 - Enhanced security with PKCE protection
-- One-time browser authorization
+- Shared browser authorization and refresh-token renewal when supported
 - Tokens stored securely with automatic validation
 - Automatic endpoint discovery
 - No need to manage passwords

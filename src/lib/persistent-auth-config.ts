@@ -1,7 +1,6 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
-import fsSync from 'fs';
 import crypto from 'crypto';
 import { logger } from './utils.js';
 import { CONFIG, MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
@@ -226,7 +225,19 @@ export async function writeTokens(serverUrlHash: string, tokens: WPTokens): Prom
       ...tokens,
       obtained_at: Date.now(),
     };
-    await writeJsonFile(serverUrlHash, 'tokens.json', tokensWithTimestamp);
+    await ensureConfigDir();
+    const file = getConfigFilePath(serverUrlHash, 'tokens.json');
+    const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(temporary, JSON.stringify(tokensWithTimestamp, null, 2), {
+        encoding: 'utf-8',
+        mode: 0o600,
+        flag: 'wx',
+      });
+      await fs.rename(temporary, file);
+    } finally {
+      await fs.rm(temporary, { force: true });
+    }
     logger.info(`Stored tokens for server hash: ${serverUrlHash}`, 'AUTH');
   } catch (error) {
     logger.error(`Error writing tokens for ${serverUrlHash}`, 'AUTH', error);
@@ -289,7 +300,7 @@ export function isTokenValid(tokens: WPTokens): TokenValidationResult {
   }
 
   // If no expiration info, assume valid (avoid unnecessary calculations)
-  if (!tokens.expires_in || !tokens.obtained_at) {
+  if (tokens.expires_in === undefined || tokens.obtained_at === undefined) {
     return { isValid: true };
   }
 
@@ -334,35 +345,4 @@ export async function getValidTokens(serverUrlHash: string): Promise<WPTokens | 
   }
 
   return tokens;
-}
-
-/**
- * Clean up expired tokens (optional - mainly for maintenance)
- */
-export async function cleanupExpiredTokens(): Promise<void> {
-  try {
-    const configDir = getConfigDir();
-    if (!fsSync.existsSync(configDir)) {
-      return;
-    }
-
-    const files = await fs.readdir(configDir);
-    const tokenFiles = files.filter(file => file.endsWith('_tokens.json'));
-
-    let cleaned = 0;
-    for (const file of tokenFiles) {
-      const serverHash = file.replace('_tokens.json', '');
-      const tokens = await readTokens(serverHash);
-      if (tokens && !isTokenValid(tokens).isValid) {
-        await deleteTokens(serverHash);
-        cleaned++;
-      }
-    }
-
-    if (cleaned > 0) {
-      logger.info(`Cleaned up ${cleaned} expired token files`, 'AUTH');
-    }
-  } catch (error) {
-    logger.error('Error during token cleanup', 'AUTH', error);
-  }
 }

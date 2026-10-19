@@ -307,7 +307,8 @@ export async function getOAuthCallbackPort(): Promise<number> {
   return selectCallbackPort(
     CONFIG.WP_API_URL,
     CONFIG.OAUTH_CALLBACK_PORT,
-    false // Always treat as self-hosted for port selection
+    false,
+    CONFIG.OAUTH_HOST
   );
 }
 
