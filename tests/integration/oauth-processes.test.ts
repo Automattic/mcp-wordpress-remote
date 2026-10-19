@@ -18,11 +18,21 @@ describe('OAuth across proxy processes', () => {
   let refreshes: number;
   let grants: number;
   let tokenStatus: number;
+  let tokenError: string;
+  let rejectAccess: boolean;
+  let scopeChallenge: boolean;
+  let grantedScope: string;
   let children: ChildProcess[];
   const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
 
   beforeAll(async () => {
     directory = mkdtempSync(join(tmpdir(), 'oauth-processes-'));
+    if (process.env.OAUTH_PROCESS_PROXY_PATH) {
+      if (!process.env.OAUTH_PROCESS_BROWSER_MODULE)
+        throw new Error('Packed artifact checks require the explicit fake browser preload');
+      bundle = resolve(process.env.OAUTH_PROCESS_PROXY_PATH);
+      return;
+    }
     bundle = join(directory, 'proxy.cjs');
     await build({
       entryPoints: [resolve('src/proxy.ts')],
@@ -38,6 +48,10 @@ describe('OAuth across proxy processes', () => {
   beforeEach(async () => {
     browsers = refreshes = grants = 0;
     tokenStatus = 200;
+    tokenError = 'server_error';
+    rejectAccess = false;
+    scopeChallenge = false;
+    grantedScope = 'read';
     children = [];
     cache = mkdtempSync(join(directory, 'cache-'));
     server = createServer(async (request, response) => {
@@ -52,22 +66,25 @@ describe('OAuth across proxy processes', () => {
         response.end(
           JSON.stringify({
             issuer: origin,
+            scope: 'read',
             authorization_endpoint: `${origin}/authorize`,
             token_endpoint: `${origin}/token`,
             response_types_supported: ['code'],
+            code_challenge_methods_supported: ['S256'],
+            authorization_response_iss_parameter_supported: true,
             token_endpoint_auth_methods_supported: ['none'],
           })
         );
       } else if (request.url === '/token') {
-        if (tokenStatus !== 200) {
+        const params = new URLSearchParams(body);
+        if (tokenStatus !== 200 && params.get('grant_type') === 'refresh_token') {
           refreshes++;
           setTimeout(() => {
             response.statusCode = tokenStatus;
-            response.end(JSON.stringify({ error: 'server_error' }));
+            response.end(JSON.stringify({ error: tokenError }));
           }, 400);
           return;
         }
-        const params = new URLSearchParams(body);
         if (params.get('grant_type') === 'refresh_token') refreshes++;
         else grants++;
         setTimeout(
@@ -78,11 +95,39 @@ describe('OAuth across proxy processes', () => {
                 refresh_token: 'rotated-refresh',
                 token_type: 'Bearer',
                 expires_in: 3600,
+                scope: grantedScope,
               })
             ),
           150
         );
       } else {
+        if (!request.headers.authorization) {
+          response.statusCode = 401;
+          response.setHeader(
+            'WWW-Authenticate',
+            `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`
+          );
+          response.end(JSON.stringify({ error: 'invalid_token' }));
+          return;
+        }
+        if (rejectAccess && request.headers.authorization === 'Bearer expired-access') {
+          response.statusCode = 401;
+          response.setHeader(
+            'WWW-Authenticate',
+            `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`
+          );
+          response.end(JSON.stringify({ error: 'invalid_token' }));
+          return;
+        }
+        if (scopeChallenge && grants === 0) {
+          response.statusCode = 403;
+          response.setHeader(
+            'WWW-Authenticate',
+            `Bearer error="insufficient_scope", scope="write", resource_metadata="${origin}/.well-known/oauth-protected-resource"`
+          );
+          response.end(JSON.stringify({ error: 'insufficient_scope' }));
+          return;
+        }
         const rpc = JSON.parse(body);
         response.setHeader('Mcp-Session-Id', 'fixture-session');
         response.end(
@@ -107,7 +152,7 @@ describe('OAuth across proxy processes', () => {
     mkdirSync(join(cache, `wordpress-remote-${version}`));
     writeFileSync(
       credentialFile('client_info.json'),
-      JSON.stringify({ client_id: 'fixture-client' })
+      JSON.stringify({ client_id: 'fixture-client', issuer: origin })
     );
   });
 
@@ -135,6 +180,8 @@ describe('OAuth across proxy processes', () => {
       credentialFile('tokens.json'),
       JSON.stringify({
         access_token: 'expired-access',
+        issuer: origin,
+        scope: 'read',
         refresh_token: 'fixture-refresh',
         expires_in: 1,
         obtained_at: Date.now() - 120000,
@@ -143,11 +190,14 @@ describe('OAuth across proxy processes', () => {
     );
   }
 
-  function connect(): Promise<void> {
-    const child = spawn(process.execPath, [bundle], {
+  function connect(overrides: Record<string, string> = {}): Promise<void> {
+    const arguments_ = process.env.OAUTH_PROCESS_BROWSER_MODULE
+      ? ['--require', resolve(process.env.OAUTH_PROCESS_BROWSER_MODULE), bundle]
+      : [bundle];
+    const child = spawn(process.execPath, arguments_, {
       env: {
         ...process.env,
-        NODE_PATH: resolve('node_modules'),
+        NODE_PATH: process.env.OAUTH_PROCESS_PROXY_PATH ? '' : resolve('node_modules'),
         WP_MCP_CONFIG_DIR: cache,
         WP_API_URL: `${origin}/mcp`,
         OAUTH_ENABLED: 'true',
@@ -165,12 +215,17 @@ describe('OAuth across proxy processes', () => {
         HTTP_PROXY: '',
         HTTPS_PROXY: '',
         ALL_PROXY: '',
+        ...overrides,
       },
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
     children.push(child);
     child.on('message', message => {
-      if ((message as { kind?: string }).kind === 'browser') browsers++;
+      const data = message as { kind?: string; scope?: string };
+      if (data.kind === 'browser') {
+        browsers++;
+        grantedScope = data.scope || 'read';
+      }
     });
     return new Promise((resolve, reject) => {
       let buffer = '',
@@ -240,6 +295,51 @@ describe('OAuth across proxy processes', () => {
     expect(refreshes).toBe(1);
     expect(browsers).toBe(0);
     expect(readFileSync(credentialFile('tokens.json'), 'utf8')).toBe(before);
+  });
+
+  it('renews once for concurrent 401s against a locally unexpired token', async () => {
+    expired();
+    const file = credentialFile('tokens.json');
+    const record = JSON.parse(readFileSync(file, 'utf8'));
+    writeFileSync(file, JSON.stringify({ ...record, expires_in: 3600, obtained_at: Date.now() }));
+    rejectAccess = true;
+    await Promise.all([connect(), connect(), connect()]);
+    expect(refreshes).toBe(1);
+    expect(browsers).toBe(0);
+  });
+
+  it('falls back to one browser after a shared invalid_grant', async () => {
+    expired();
+    tokenStatus = 400;
+    tokenError = 'invalid_grant';
+    await Promise.all([connect(), connect(), connect()]);
+    expect(refreshes).toBe(1);
+    expect(browsers).toBe(1);
+    expect(grants).toBe(1);
+  });
+
+  it('coordinates scope upgrade across processes and preserves the earlier scope', async () => {
+    expired();
+    const file = credentialFile('tokens.json');
+    const record = JSON.parse(readFileSync(file, 'utf8'));
+    writeFileSync(file, JSON.stringify({ ...record, expires_in: 3600, obtained_at: Date.now() }));
+    scopeChallenge = true;
+    await Promise.all([connect(), connect(), connect()]);
+    expect(refreshes).toBe(0);
+    expect(browsers).toBe(1);
+    expect(grants).toBe(1);
+    expect(new Set(grantedScope.split(' '))).toEqual(new Set(['read', 'write']));
+  });
+
+  it('ends shared authorization denial without opening successive login tabs', async () => {
+    const results = await Promise.allSettled([
+      connect({ OAUTH_FIXTURE_DENY: 'true' }),
+      connect({ OAUTH_FIXTURE_DENY: 'true' }),
+      connect({ OAUTH_FIXTURE_DENY: 'true' }),
+    ]);
+    expect(results.every(result => result.status === 'rejected')).toBe(true);
+    expect(browsers).toBe(1);
+    expect(grants).toBe(0);
   });
 
   it('recovers a stale lock left by an absent owner', async () => {

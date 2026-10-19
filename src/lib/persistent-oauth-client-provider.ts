@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import open from 'open';
 import { EventEmitter } from 'node:events';
 import {
@@ -201,7 +202,10 @@ export class PersistentWPOAuthClientProvider {
     const callbackPort =
       this.options.callbackPort === 0 ? await getOAuthCallbackPort() : this.options.callbackPort;
 
+    const state = this.generateState();
     const callbackServerOptions = {
+      flow: 'implicit' as const,
+      state,
       port: callbackPort,
       host: this.options.host,
       serverUrlHash: this.serverUrlHash,
@@ -218,7 +222,6 @@ export class PersistentWPOAuthClientProvider {
       logger.oauth('Callback server started successfully');
 
       // Generate state parameter for security
-      const state = this.generateState();
       logger.debug(`Generated state parameter: ${state}`, 'OAUTH');
 
       // Build authorization URL
@@ -229,6 +232,8 @@ export class PersistentWPOAuthClientProvider {
 
       // Open browser to authorization URL
       logger.oauth('Attempting to open browser...');
+      const authorization = this.waitForAuthorizationResult();
+      void authorization.catch(() => {});
       try {
         await open(authUrl);
         logger.oauth('Browser opened successfully');
@@ -243,7 +248,7 @@ export class PersistentWPOAuthClientProvider {
 
       // Wait for authorization result
       logger.oauth('Waiting for authorization result...');
-      const tokens = await this.waitForAuthorizationResult();
+      const tokens = await authorization;
       logger.oauth('Authorization result received');
 
       // Save tokens to persistent storage
@@ -311,9 +316,7 @@ export class PersistentWPOAuthClientProvider {
    * Generate a secure state parameter
    */
   private generateState(): string {
-    return (
-      Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
-    );
+    return randomBytes(32).toString('base64url');
   }
 
   /**

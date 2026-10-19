@@ -300,7 +300,7 @@ export function isTokenValid(tokens: WPTokens): TokenValidationResult {
   }
 
   // If no expiration info, assume valid (avoid unnecessary calculations)
-  if (!tokens.expires_in || !tokens.obtained_at) {
+  if (tokens.expires_in === undefined || tokens.obtained_at === undefined) {
     return { isValid: true };
   }
 

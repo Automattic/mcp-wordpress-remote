@@ -1,6 +1,6 @@
 /**
  * WordPress OAuth types and error definitions
- * Updated for MCP Authorization specification 2025-06-18 compliance
+ * Updated for MCP Authorization specification 2026-07-28 compliance
  */
 
 /**
@@ -8,6 +8,7 @@
  */
 export interface WPTokens {
   access_token: string;
+  issuer?: string;
   token_type: string;
   expires_in?: number;
   scope?: string;
@@ -20,6 +21,11 @@ export interface WPTokens {
  */
 export interface WPClientInfo {
   client_id: string;
+  issuer?: string;
+  redirect_uris?: string[];
+  grant_types?: string[];
+  application_type?: string;
+  token_endpoint_auth_method?: string;
   client_secret?: string;
   authorization_endpoint?: string;
   token_endpoint?: string;
@@ -53,6 +59,10 @@ export interface OAuthCallbackServerOptions {
   host: string;
   serverUrlHash: string;
   timeout?: number;
+  flow?: 'authorization_code' | 'implicit';
+  state?: string;
+  issuer?: string;
+  requireIssuer?: boolean;
 }
 
 /**
@@ -195,7 +205,7 @@ export function isAPIError(error: any): error is APIError {
 
 /**
  * MCP Authorization Specification Interfaces
- * Based on MCP Authorization specification 2025-06-18
+ * Based on MCP Authorization specification 2026-07-28
  */
 
 /**
@@ -233,6 +243,7 @@ export interface ProtectedResourceMetadata {
  * OAuth 2.0 Dynamic Client Registration (RFC 7591)
  */
 export interface ClientRegistrationRequest {
+  application_type?: 'native' | 'web';
   redirect_uris: string[];
   token_endpoint_auth_method?: string;
   grant_types?: string[];

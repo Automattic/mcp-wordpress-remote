@@ -4,7 +4,8 @@ import { JSONRPCMessage, JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/
 import { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { CONFIG } from './config.js';
 import { proxyFetch } from './fetch-utils.js';
-import { discardRejectedOAuthToken, getRequestUrl, getWordPressHeaders } from './wordpress-api.js';
+import { recoverOAuthAuthorization, getRequestUrl, getWordPressHeaders } from './wordpress-api.js';
+import { parseWWWAuthenticateHeader } from './mcp-oauth-utils.js';
 import { APIError } from './oauth-types.js';
 import { extractNetworkErrorCode, extractNetworkErrorMessage } from './error-utils.js';
 
@@ -54,7 +55,7 @@ function collectHeaderParams(schema: unknown, path: string[] = []): HeaderParam[
  * no challenge at all, so a missing header counts as a bearer rejection.
  */
 function isBearerChallenge(challenge: string | null): boolean {
-  return challenge === null || /^Bearer\b/i.test(challenge);
+  return challenge === null || parseWWWAuthenticateHeader(challenge).scheme === 'Bearer';
 }
 
 function valueAtPath(value: unknown, path: string[]): unknown {
@@ -71,6 +72,8 @@ export function createWordPressTransport(
 ): WordPressTransport {
   const inflight = new Map<string | number, () => void>();
   const toolHeaders = new Map<string, HeaderParam[]>();
+  const scopeAttempts = new Set<string>();
+  const scopeCounts = new Map<string, number>();
   const send = async (
     url: string | URL,
     init: RequestInit | undefined,
@@ -119,7 +122,9 @@ export function createWordPressTransport(
     };
 
     try {
-      const headers = new Headers(await getWordPressHeaders(message));
+      const headers = new Headers(
+        await getWordPressHeaders(message, { allowUnauthenticated: !retried })
+      );
       // Start the deadline after authentication: an interactive OAuth login must not
       // count against it. The GET stream and subscriptions/listen are long-lived by design.
       if (init?.method !== 'GET' && request?.method !== 'subscriptions/listen') {
@@ -159,22 +164,48 @@ export function createWordPressTransport(
         headers,
         signal: controller.signal,
       });
-      // Retry once with a new sign-in when WordPress rejects the stored token.
-      // Decide before wrapping the body, so discarding it cannot report a failure.
-      if (
-        response.status === 401 &&
+      const challenge = parseWWWAuthenticateHeader(response.headers.get('WWW-Authenticate') ?? '');
+      const operationKey = JSON.stringify([
+        request?.method,
+        request?.params?.name ?? request?.params?.uri,
+      ]);
+      const scopeKey = JSON.stringify([
+        request?.method,
+        request?.params?.name,
+        challenge.scope?.split(/\s+/).sort(),
+      ]);
+      const canRecover =
         !retried &&
-        isBearerChallenge(response.headers.get('WWW-Authenticate')) &&
-        (await discardRejectedOAuthToken(headers.get('Authorization')))
-      ) {
-        // node-fetch (used with SOCKS/PAC) exposes a Node stream instead of a Web stream.
-        const unread = response.body as any;
-        if (typeof unread?.cancel === 'function') await unread.cancel();
-        else unread?.destroy?.();
-        cleanup();
-        // The client may have cancelled the request while the token was discarded.
-        if (cancelled) return new Response(null, { status: 202 });
-        return send(url, init, true);
+        ((response.status === 401 && isBearerChallenge(response.headers.get('WWW-Authenticate'))) ||
+          (response.status === 403 &&
+            challenge.error === 'insufficient_scope' &&
+            !!challenge.scope &&
+            !scopeAttempts.has(scopeKey) &&
+            (scopeCounts.get(operationKey) ?? 0) < 2));
+      if (canRecover) {
+        if (response.status === 403) {
+          scopeAttempts.add(scopeKey);
+          scopeCounts.set(operationKey, (scopeCounts.get(operationKey) ?? 0) + 1);
+        }
+        // Keep cancellation registered while consent is pending, but pause the HTTP deadline.
+        clearTimeout(timer);
+        const recovered = await recoverOAuthAuthorization(
+          headers.get('Authorization'),
+          challenge,
+          response.status
+        );
+        if (recovered) {
+          const unread = response.body as any;
+          if (typeof unread?.cancel === 'function') await unread.cancel();
+          else unread?.destroy?.();
+          cleanup();
+          if (cancelled) return new Response(null, { status: 202 });
+          return send(url, init, true);
+        }
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, timeoutMs);
       }
       // node-fetch (used with SOCKS/PAC) exposes a Node stream; the SDK requires Web streams.
       const body =

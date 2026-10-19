@@ -35,3 +35,10 @@ The version lives in two places that must move together: `version` in `package.j
 - An in-flight initialize gates subsequent client methods until its response or failure. Preserve degraded connection handling and never retry through the archived simple-format transport.
 - Keep WordPress authentication/configuration in the shared HTTP header helper. System-proxy responses use Node streams and require Web stream adaptation for SDK SSE parsing.
 - Verify CLI behavior through `tests/integration/pass-through.test.ts`. It can also target a clean installed artifact with `PROXY_TEST_PATH=/absolute/path/to/dist/proxy.js`.
+
+## OAuth client
+
+- The upstream OAuth profile is a public native authorization-code client. Its supported behavior and compatibility boundaries live in `Docs/authentication.md`.
+- Keep registration and token records bound to their issuing authorization server. Credential mutation and rejected-token recovery share the OAuth file lock.
+- OAuth HTTP calls use `oauth-http.ts` for endpoint validation, destination-scoped configuration headers, and bounded requests.
+- Exercise protocol behavior through `oauth-client-contract.test.ts` and real process coordination through `oauth-processes.test.ts`; keep synthetic browser adapters out of production bundles.

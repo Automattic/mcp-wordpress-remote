@@ -42,19 +42,20 @@ describe('OAuth renewal', () => {
     const expired = {
       access_token: 'expired-access',
       refresh_token: 'usable-refresh',
+      issuer: origin,
       token_type: 'Bearer',
       expires_in: 1,
       obtained_at: Date.now() - 120000,
     };
     await storage.writeJsonFile(hash, 'tokens.json', expired);
-    await storage.writeClientInfo(hash, { client_id: 'saved-client' });
+    await storage.writeClientInfo(hash, { client_id: 'saved-client', issuer: origin });
     const provider = new MCPOAuthProvider({ serverUrl });
     return { storage, hash, expired, provider, open };
   }
 
   function discovery() {
     return nock(origin)
-      .get('/.well-known/oauth-protected-resource')
+      .get('/.well-known/oauth-protected-resource/mcp')
       .reply(200, { resource: serverUrl, authorization_servers: [origin] })
       .get('/.well-known/oauth-authorization-server')
       .reply(200, {
@@ -62,6 +63,7 @@ describe('OAuth renewal', () => {
         authorization_endpoint: `${origin}/authorize`,
         token_endpoint: `${origin}/token`,
         response_types_supported: ['code'],
+        code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: ['none'],
       });
   }

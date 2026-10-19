@@ -209,9 +209,32 @@ export async function registerDynamicClient(
     const registrationResponse = (await response.json()) as ClientRegistrationResponse;
 
     // Validate response
-    if (!registrationResponse.client_id) {
+    if (typeof registrationResponse.client_id !== 'string' || !registrationResponse.client_id) {
       throw new OAuthError(
         'Dynamic client registration response missing client_id',
+        'INVALID_REGISTRATION_RESPONSE'
+      );
+    }
+
+    if (
+      registrationResponse.token_endpoint_auth_method &&
+      registrationResponse.token_endpoint_auth_method !==
+        registrationRequest.token_endpoint_auth_method
+    ) {
+      throw new OAuthError(
+        'Authorization server changed the requested client authentication method',
+        'INVALID_REGISTRATION_RESPONSE'
+      );
+    }
+    if (
+      registrationResponse.redirect_uris &&
+      (!Array.isArray(registrationResponse.redirect_uris) ||
+        !registrationRequest.redirect_uris.every(uri =>
+          registrationResponse.redirect_uris.includes(uri)
+        ))
+    ) {
+      throw new OAuthError(
+        'Authorization server changed the registered callback URI',
         'INVALID_REGISTRATION_RESPONSE'
       );
     }
@@ -323,11 +346,12 @@ export function buildAuthorizationUrl(
     response_type: 'code', // OAuth 2.1 uses authorization code flow
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: scopes.join(' '),
     state,
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
   });
+
+  if (scopes.length) params.set('scope', scopes.join(' '));
 
   // Add resource parameter for RFC 8707 compliance
   if (resource) {

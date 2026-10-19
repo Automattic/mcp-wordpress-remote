@@ -92,14 +92,18 @@ describe('MCPOAuthProvider client registration', () => {
     const provider = new MCPOAuthProvider({ serverUrl, scopes: ['read', 'write'] });
     // ensureClientRegistration() is reached after discovery in the real flow;
     // inject the discovered metadata directly to isolate the registration step.
-    (provider as any).authServerMetadata = { registration_endpoint: registrationEndpoint };
+    (provider as any).authServerMetadata = {
+      issuer: origin,
+      code_challenge_methods_supported: ['S256'],
+      registration_endpoint: registrationEndpoint,
+    };
     return provider;
   }
 
   it('reuses a stored client_id and does not call /register', async () => {
     const { MCPOAuthProvider, generateServerUrlHash, writeClientInfo } = await loadModules();
     const hash = generateServerUrlHash(serverUrl);
-    await writeClientInfo(hash, { client_id: 'stored-client-123' });
+    await writeClientInfo(hash, { client_id: 'stored-client-123', issuer: origin });
 
     // Any hit to the registration endpoint should fail the test.
     const scope = nock(origin).post(registrationPath).reply(201, { client_id: 'must-not-be-used' });
@@ -168,7 +172,7 @@ describe('MCPOAuthProvider client registration', () => {
   it('reuses the stored client even when tokens are absent/expired (re-auth, not re-register)', async () => {
     const { MCPOAuthProvider, generateServerUrlHash, writeClientInfo } = await loadModules();
     const hash = generateServerUrlHash(serverUrl);
-    await writeClientInfo(hash, { client_id: 'stored-client-789' });
+    await writeClientInfo(hash, { client_id: 'stored-client-789', issuer: origin });
 
     // No tokens are persisted, mimicking expiry/first-run-after-reauth. The
     // provider must still reuse the registration rather than create a new one.
@@ -186,7 +190,11 @@ describe('MCPOAuthProvider client registration', () => {
     const scope = nock(origin).post(registrationPath).reply(201, { client_id: 'must-not-be-used' });
 
     const provider = new MCPOAuthProvider({ serverUrl, clientId: 'env-client', scopes: ['read'] });
-    (provider as any).authServerMetadata = { registration_endpoint: registrationEndpoint };
+    (provider as any).authServerMetadata = {
+      issuer: origin,
+      code_challenge_methods_supported: ['S256'],
+      registration_endpoint: registrationEndpoint,
+    };
 
     await (provider as any).ensureClientRegistration();
 
@@ -229,6 +237,10 @@ describe('MCPOAuthProvider client registration', () => {
     // stub them so this test isolates step 4 (port selection) through step 8
     // (token exchange) of performAuthorization().
     provider.discoverOAuthEndpoints = jest.fn().mockImplementation(async () => {
+      provider.authServerMetadata ??= {
+        issuer: origin,
+        code_challenge_methods_supported: ['S256'],
+      };
       provider.config.authorizationEndpoint = `${origin}/oauth/authorize`;
       provider.config.tokenEndpoint = `${origin}/oauth/token`;
     });
@@ -261,7 +273,15 @@ describe('MCPOAuthProvider client registration', () => {
     const provider: any = new MCPOAuthProvider({ serverUrl, scopes: ['read'] });
 
     provider.discoverOAuthEndpoints = jest.fn().mockImplementation(async () => {
-      provider.authServerMetadata = { registration_endpoint: registrationEndpoint };
+      provider.authServerMetadata = {
+        issuer: origin,
+        code_challenge_methods_supported: ['S256'],
+        registration_endpoint: registrationEndpoint,
+      };
+      provider.authServerMetadata ??= {
+        issuer: origin,
+        code_challenge_methods_supported: ['S256'],
+      };
       provider.config.authorizationEndpoint = `${origin}/oauth/authorize`;
       provider.config.tokenEndpoint = `${origin}/oauth/token`;
     });
@@ -294,7 +314,15 @@ describe('MCPOAuthProvider client registration', () => {
     provider.config.callbackPort = await getFreePort();
 
     provider.discoverOAuthEndpoints = jest.fn().mockImplementation(async () => {
-      provider.authServerMetadata = { registration_endpoint: registrationEndpoint };
+      provider.authServerMetadata = {
+        issuer: origin,
+        code_challenge_methods_supported: ['S256'],
+        registration_endpoint: registrationEndpoint,
+      };
+      provider.authServerMetadata ??= {
+        issuer: origin,
+        code_challenge_methods_supported: ['S256'],
+      };
       provider.config.authorizationEndpoint = `${origin}/oauth/authorize`;
       provider.config.tokenEndpoint = `${origin}/oauth/token`;
     });

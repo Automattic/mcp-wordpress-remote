@@ -6,20 +6,15 @@ import { EventEmitter } from 'node:events';
 import { createParser } from 'eventsource-parser';
 import { WordPressRequestParams, WordPressResponse } from './types.js';
 import { logger } from './utils.js';
-import { CONFIG, validateConfig, getDefaultOAuthScopes, getCustomHeaders } from './config.js';
+import { CONFIG, validateConfig, getCustomHeaders } from './config.js';
 import { proxyFetch } from './fetch-utils.js';
-import { WPTokens, AuthError, APIError } from './oauth-types.js';
+import { WPTokens, AuthError, APIError, WWWAuthenticateHeader } from './oauth-types.js';
 import {
   extractNetworkErrorCode,
   extractNetworkErrorMessage,
   getConnectionErrorHint,
 } from './error-utils.js';
-import {
-  deleteTokens,
-  getValidTokens,
-  generateServerUrlHash,
-  readTokens,
-} from './persistent-auth-config.js';
+import { getValidTokens, generateServerUrlHash } from './persistent-auth-config.js';
 import { MCPOAuthProvider } from './mcp-oauth-provider.js';
 import { createLazyWPAuthCoordinator } from './coordination.js';
 
@@ -126,9 +121,13 @@ function constructApiUrl(baseUrl: string, defaultEndpoint: string): string {
   }
 }
 
-/**
- * Get OAuth tokens for WordPress API access using MCP-compliant OAuth 2.1
- */
+function getMCPOAuthProvider(): MCPOAuthProvider {
+  return (mcpOAuthProvider ??= new MCPOAuthProvider({
+    serverUrl: getRequestUrl(),
+    clientId: CONFIG.WP_OAUTH_CLIENT_ID,
+  }));
+}
+
 async function getOAuthTokens(): Promise<WPTokens | null> {
   try {
     // Check if OAuth is enabled
@@ -139,7 +138,7 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
 
     logger.auth('Attempting to get OAuth tokens for WordPress API (MCP-compliant)...');
 
-    const serverUrl = CONFIG.WP_API_URL;
+    const serverUrl = getRequestUrl();
     const serverUrlHash = generateServerUrlHash(serverUrl);
 
     // Try to get existing valid tokens first
@@ -156,17 +155,10 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
     // Use MCP OAuth 2.1 provider for all sites
     if (CONFIG.OAUTH_FLOW_TYPE === 'authorization_code' && CONFIG.OAUTH_USE_PKCE) {
       // Use MCP-compliant OAuth 2.1 provider
-      if (!mcpOAuthProvider) {
-        mcpOAuthProvider = new MCPOAuthProvider({
-          serverUrl,
-          clientId: CONFIG.WP_OAUTH_CLIENT_ID,
-          scopes: getDefaultOAuthScopes(),
-        });
-      }
-
       logger.auth('Using MCP-compliant OAuth 2.1 authorization code flow with PKCE');
-      await mcpOAuthProvider.authorize();
-      const tokens = await mcpOAuthProvider.tokens();
+      const provider = getMCPOAuthProvider();
+      await provider.authorize();
+      const tokens = await provider.tokens();
 
       if (tokens) {
         logger.auth('MCP OAuth 2.1 tokens obtained for WordPress API access');
@@ -214,25 +206,32 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
   }
 }
 
-/**
- * Delete the stored OAuth token after WordPress rejects it with a 401, so the
- * next request signs in again instead of reusing it until its local expiry.
- *
- * @param authorization The Authorization header the rejected request sent.
- * @return Whether the stored token was deleted.
- */
-export async function discardRejectedOAuthToken(authorization: string | null): Promise<boolean> {
-  if (!CONFIG.OAUTH_ENABLED || CONFIG.JWT_TOKEN) {
+export async function recoverOAuthAuthorization(
+  authorization: string | null,
+  challenge?: WWWAuthenticateHeader,
+  status: number = 401
+): Promise<boolean> {
+  if (
+    !CONFIG.OAUTH_ENABLED ||
+    CONFIG.JWT_TOKEN ||
+    CONFIG.OAUTH_FLOW_TYPE !== 'authorization_code' ||
+    !CONFIG.OAUTH_USE_PKCE
+  )
     return false;
-  }
-  const serverUrlHash = generateServerUrlHash(CONFIG.WP_API_URL);
-  const tokens = await readTokens(serverUrlHash);
-  // Another request may already have replaced the token that was rejected.
-  if (!tokens || authorization !== `Bearer ${tokens.access_token}`) {
-    return false;
-  }
-  logger.warn('WordPress rejected the stored OAuth token; signing in again', 'AUTH');
-  await deleteTokens(serverUrlHash);
+  if (authorization && !/^Bearer /i.test(authorization)) return false;
+  const scopes =
+    status === 401 || challenge?.error === 'insufficient_scope'
+      ? challenge?.scope?.split(/\s+/).filter(Boolean)
+      : undefined;
+  if (status === 403 && !scopes?.length) return false;
+  const current = await getValidTokens(generateServerUrlHash(getRequestUrl()));
+  if (status === 403 && scopes?.every(scope => current?.scope?.split(' ').includes(scope)))
+    return current?.access_token !== authorization?.slice(7);
+  await getMCPOAuthProvider().authorize({
+    rejectedToken: status === 401 ? authorization?.slice(7) : undefined,
+    challenge,
+    scopes,
+  });
   return true;
 }
 
@@ -346,7 +345,10 @@ interface RequestExecutionResult {
   sessionIdUsed: string | null;
 }
 
-export async function getWordPressHeaders(requestData: any): Promise<Record<string, string>> {
+export async function getWordPressHeaders(
+  requestData: any,
+  options: { allowUnauthenticated?: boolean } = {}
+): Promise<Record<string, string>> {
   validateEnvironment();
   // Prepare authorization header - try authentication methods in order of priority
   let authHeader: string = '';
@@ -360,7 +362,10 @@ export async function getWordPressHeaders(requestData: any): Promise<Record<stri
   // 2. OAuth (if enabled and no JWT)
   else if (CONFIG.OAUTH_ENABLED) {
     logger.auth('OAuth is the primary authentication method - attempting to get tokens...');
-    const oauthTokens = await getOAuthTokens();
+    const oauthTokens =
+      options.allowUnauthenticated && !CONFIG.WP_API_USERNAME
+        ? await getValidTokens(generateServerUrlHash(getRequestUrl()))
+        : await getOAuthTokens();
     if (oauthTokens) {
       authHeader = `Bearer ${oauthTokens.access_token}`;
       logger.auth('Using OAuth token authentication for WordPress API');
@@ -421,7 +426,7 @@ export async function getWordPressHeaders(requestData: any): Promise<Record<stri
   const hasCustomHeaders = Object.keys(customHeaders).length > 0;
 
   // Ensure we have an authorization header OR custom headers for authentication
-  if (!authHeader && !hasCustomHeaders) {
+  if (!authHeader && !hasCustomHeaders && !(options.allowUnauthenticated && CONFIG.OAUTH_ENABLED)) {
     throw new AuthError(
       'No authentication method available. Please configure JWT_TOKEN, OAuth, Basic Auth (WP_API_USERNAME+WP_API_PASSWORD), or CUSTOM_HEADERS.',
       'NO_AUTH_METHOD'

@@ -21,7 +21,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "Docs/authentication.md"
   ],
   "main": "dist/proxy.js",
   "exports": {
