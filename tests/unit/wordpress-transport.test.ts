@@ -228,4 +228,45 @@ describe('WordPress transport rejected OAuth token', () => {
       jest.restoreAllMocks();
     }
   });
+
+  it('retries when the 401 carries a Bearer challenge', async () => {
+    const bearerRejected = () =>
+      new Response(JSON.stringify({ code: 'oauth2_invalid_token' }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate':
+            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource"',
+        },
+      }) as any;
+    const { failures, transport, sentAuthorization } = await setup([bearerRejected, accepted]);
+    try {
+      await transport.send(initialize);
+      expect(sentAuthorization()).toEqual(['Bearer stored-token', 'Bearer new-token']);
+      expect(failures).toEqual([]);
+    } finally {
+      await transport.close();
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('keeps the stored token when the 401 asks for other credentials', async () => {
+    const basicRequired = () =>
+      new Response('Authorization Required', {
+        status: 401,
+        headers: { 'WWW-Authenticate': 'Basic realm="staging"' },
+      }) as any;
+    const { auth, serverUrlHash, failures, transport, sentAuthorization } = await setup([
+      basicRequired,
+    ]);
+    try {
+      await transport.send(initialize).catch(() => {});
+      expect(sentAuthorization()).toEqual(['Bearer stored-token']);
+      expect((await auth.readTokens(serverUrlHash))?.access_token).toBe('stored-token');
+      expect(failures.map(error => error.statusCode)).toEqual([401]);
+    } finally {
+      await transport.close();
+      jest.restoreAllMocks();
+    }
+  });
 });
