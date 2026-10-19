@@ -4,6 +4,10 @@
  */
 
 import open from 'open';
+import lockfile from 'proper-lockfile';
+import { setTimeout as delay } from 'node:timers/promises';
+import { refreshAuthorization } from '@modelcontextprotocol/sdk/client/auth.js';
+import { InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { EventEmitter } from 'node:events';
 import {
   WPTokens,
@@ -27,6 +31,8 @@ import {
   readTextFile,
   deleteConfigFile,
   isTokenValid,
+  ensureConfigDir,
+  getConfigFilePath,
 } from './persistent-auth-config.js';
 import {
   generatePKCE,
@@ -305,32 +311,78 @@ export class MCPOAuthProvider {
    * Initiate MCP-compliant OAuth 2.1 authorization flow
    */
   async authorize(): Promise<void> {
-    // If authorization is already in progress, wait for it
-    if (this.authPromise) {
-      logger.oauth('Authorization already in progress, waiting...');
-      await this.authPromise;
-      return;
+    if (!this.authPromise) {
+      this.authPromise = this.authorizeWithLock();
     }
-
-    // Check if we already have valid tokens
-    const existingTokens = await this.tokens();
-    if (existingTokens) {
-      logger.oauth('Already have valid tokens, skipping authorization');
-      return;
+    const pending = this.authPromise;
+    try {
+      await pending;
+    } finally {
+      if (this.authPromise === pending) this.authPromise = null;
     }
+  }
 
-    logger.oauth('Starting MCP-compliant OAuth 2.1 authorization flow');
+  private async authorizeWithLock(): Promise<WPTokens> {
+    const valid = await this.tokens();
+    if (valid) return valid;
 
-    this.authPromise = this.performAuthorization();
+    await ensureConfigDir();
+    const file = getConfigFilePath(this.serverUrlHash, 'oauth');
+    let release: () => Promise<void>;
+    try {
+      release = await lockfile.lock(file, { realpath: false });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ELOCKED') throw error;
+      const deadline = Date.now() + this.config.timeout;
+      while (Date.now() < deadline) {
+        const tokens = await this.tokens();
+        if (tokens) return tokens;
+        if (!(await lockfile.check(file, { realpath: false }))) {
+          // The owner saves credentials before releasing its lock.
+          const completed = await this.tokens();
+          if (completed) return completed;
+          throw new OAuthError('Authentication in another process did not complete', 'AUTH_FAILED');
+        }
+        await delay(Math.min(100, Math.max(0, deadline - Date.now())));
+      }
+      throw new OAuthError('Timeout waiting for authentication in another process', 'LOCK_TIMEOUT');
+    }
 
     try {
-      await this.authPromise;
-      logger.oauth('OAuth 2.1 authorization completed successfully');
-    } catch (error) {
-      logger.error('OAuth 2.1 authorization failed', 'OAUTH', error);
-      throw error;
+      const completed = await this.tokens();
+      if (completed) return completed;
+      const stored = await readTokens(this.serverUrlHash);
+      const client = await readClientInfo(this.serverUrlHash);
+      const clientId = this.config.clientId || client?.client_id;
+      if (stored?.refresh_token && clientId) {
+        await this.discoverOAuthEndpoints();
+        try {
+          const renewed = await refreshAuthorization(this.getAuthorizationServerUrl()!, {
+            metadata: { ...this.authServerMetadata! },
+            clientInformation: { ...client, client_id: clientId },
+            refreshToken: stored.refresh_token,
+            resource: CONFIG.OAUTH_RESOURCE_INDICATOR ? new URL(this.config.resource) : undefined,
+            fetchFn: (url, init) =>
+              proxyFetch(String(url), {
+                ...init,
+                headers: {
+                  ...getCustomHeaders(),
+                  ...Object.fromEntries(new Headers(init?.headers)),
+                },
+                signal: AbortSignal.timeout(this.config.timeout),
+              }),
+          });
+          const tokens = { ...renewed, obtained_at: Date.now() };
+          await writeTokens(this.serverUrlHash, tokens);
+          return tokens;
+        } catch (error) {
+          if (!(error instanceof InvalidGrantError)) throw error;
+          await deleteConfigFile(this.serverUrlHash, 'tokens.json');
+        }
+      }
+      return await this.performAuthorization();
     } finally {
-      this.authPromise = null;
+      await release();
     }
   }
 
