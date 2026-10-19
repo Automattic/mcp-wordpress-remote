@@ -213,6 +213,7 @@ export interface AuthorizationServerMetadata {
   grant_types_supported?: string[];
   token_endpoint_auth_methods_supported?: string[];
   code_challenge_methods_supported?: string[];
+  authorization_response_iss_parameter_supported?: boolean;
   // Additional fields as needed
 }
 
@@ -222,6 +223,7 @@ export interface AuthorizationServerMetadata {
 export interface ProtectedResourceMetadata {
   resource: string;
   authorization_servers: string[];
+  scopes_supported?: string[];
   jwks_uri?: string;
   bearer_methods_supported?: string[];
   resource_documentation?: string;
@@ -319,5 +321,5 @@ export interface WWWAuthenticateHeader {
   error?: string;
   error_description?: string;
   error_uri?: string;
-  resource_metadata_url?: string;
+  resource_metadata?: string;
 }

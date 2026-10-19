@@ -137,14 +137,14 @@ describe('MCP OAuth Utils', () => {
       expect(parsed.error_description).toBe('The request requires higher privileges');
     });
 
-    it('should handle headers without quotes by not parsing unquoted values', async () => {
+    it('should parse unquoted challenge parameter values', async () => {
       const { parseWWWAuthenticateHeader } = await import('../../src/lib/mcp-oauth-utils.js');
       
       const header = 'Bearer error=invalid_token';
       const parsed = parseWWWAuthenticateHeader(header);
 
       expect(parsed.scheme).toBe('Bearer');
-      expect(parsed.error).toBeUndefined(); // Unquoted values are not parsed
+      expect(parsed.error).toBe('invalid_token');
     });
 
     it('should handle malformed headers gracefully', async () => {
