@@ -71,15 +71,15 @@ export function createWordPressTransport(
       typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
     const request = message && 'method' in message && 'id' in message ? message : undefined;
     const controller = new AbortController();
-    const abort = () => controller.abort();
+    // Cancellation by the client and abort by the SDK both mean the request was abandoned.
     let cancelled = false;
     const cancel = () => {
       cancelled = true;
-      abort();
+      controller.abort();
     };
     if (request) inflight.set(request.id, cancel);
-    init?.signal?.addEventListener('abort', abort, { once: true });
-    if (init?.signal?.aborted) abort();
+    init?.signal?.addEventListener('abort', cancel, { once: true });
+    if (init?.signal?.aborted) cancel();
     const timeoutMs =
       message && 'method' in message && message.method === 'initialize'
         ? CONFIG.WP_API_INIT_TIMEOUT
@@ -88,7 +88,7 @@ export function createWordPressTransport(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cleanup = () => {
       clearTimeout(timer);
-      init?.signal?.removeEventListener('abort', abort);
+      init?.signal?.removeEventListener('abort', cancel);
       if (request && inflight.get(request.id) === cancel) inflight.delete(request.id);
     };
     const failure = (error: unknown): APIError => {
@@ -172,16 +172,21 @@ export function createWordPressTransport(
           ? (Readable.toWeb(response.body as unknown as Readable) as ReadableStream<Uint8Array>)
           : response.body;
       const reader = body?.getReader();
+      // The SDK releases bodies it does not read (202, 405). The pull pending since
+      // construction then resumes on a closed controller and must stay quiet.
+      let released = false;
       const stream = reader
         ? new ReadableStream<Uint8Array>({
             async pull(output) {
               try {
                 const { value, done } = await reader.read();
+                if (released) return;
                 if (done) {
                   cleanup();
                   output.close();
                 } else output.enqueue(value);
               } catch (error) {
+                if (released) return;
                 if (cancelled) {
                   cleanup();
                   output.close();
@@ -189,6 +194,7 @@ export function createWordPressTransport(
               }
             },
             async cancel(reason) {
+              released = true;
               cleanup();
               await reader.cancel(reason);
             },

@@ -229,3 +229,69 @@ describe('WordPress transport rejected OAuth token', () => {
     }
   });
 });
+
+describe('WordPress transport released response bodies', () => {
+  async function setup(responses: Array<(signal: AbortSignal | null | undefined) => Response>) {
+    jest.resetModules();
+    const api = await import('../../src/lib/wordpress-api.js');
+    const fetch = await import('../../src/lib/fetch-utils.js');
+    jest
+      .spyOn(api, 'getWordPressHeaders')
+      .mockResolvedValue({ Authorization: 'Bearer fixture-token' });
+    const network = jest
+      .spyOn(fetch, 'proxyFetch')
+      .mockImplementation(
+        async (_url, init) =>
+          (responses.shift() ?? (() => new Response('', { status: 405 })))(init?.signal) as any
+      );
+    const failures: any[] = [];
+    const transport = (
+      await import('../../src/lib/wordpress-transport.js')
+    ).createWordPressTransport((_message, error) => failures.push(error));
+    transport.onerror = () => {};
+    await transport.start();
+    return { network, failures, transport };
+  }
+
+  it('stays quiet when the SDK releases a 202 body and a 405 event stream', async () => {
+    const { network, failures, transport } = await setup([
+      () => new Response('', { status: 202 }),
+      () => new Response('', { status: 405 }),
+    ]);
+    try {
+      await transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(network).toHaveBeenCalledTimes(2);
+      expect(failures).toEqual([]);
+    } finally {
+      await transport.close();
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('stays quiet when closing the transport aborts the open event stream', async () => {
+    const { failures, transport } = await setup([
+      () => new Response('', { status: 202 }),
+      signal =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              signal?.addEventListener('abort', () =>
+                controller.error(new DOMException('This operation was aborted', 'AbortError'))
+              );
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+        ),
+    ]);
+    try {
+      await transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await transport.close();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(failures).toEqual([]);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+});
