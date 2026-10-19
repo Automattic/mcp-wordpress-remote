@@ -48,6 +48,15 @@ function collectHeaderParams(schema: unknown, path: string[] = []): HeaderParam[
   });
 }
 
+/**
+ * Whether a 401 refused the bearer token. A challenge for another scheme, such as
+ * HTTP Basic in front of the site, is not a rejected token. WordPress core sends
+ * no challenge at all, so a missing header counts as a bearer rejection.
+ */
+function isBearerChallenge(challenge: string | null): boolean {
+  return challenge === null || /^Bearer\b/i.test(challenge);
+}
+
 function valueAtPath(value: unknown, path: string[]): unknown {
   return path.reduce<unknown>(
     (node, key) =>
@@ -155,6 +164,7 @@ export function createWordPressTransport(
       if (
         response.status === 401 &&
         !retried &&
+        isBearerChallenge(response.headers.get('WWW-Authenticate')) &&
         (await discardRejectedOAuthToken(headers.get('Authorization')))
       ) {
         // node-fetch (used with SOCKS/PAC) exposes a Node stream instead of a Web stream.
