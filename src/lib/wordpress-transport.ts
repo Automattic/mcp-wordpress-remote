@@ -4,7 +4,7 @@ import { JSONRPCMessage, JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/
 import { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { CONFIG } from './config.js';
 import { proxyFetch } from './fetch-utils.js';
-import { getRequestUrl, getWordPressHeaders } from './wordpress-api.js';
+import { discardRejectedOAuthToken, getRequestUrl, getWordPressHeaders } from './wordpress-api.js';
 import { APIError } from './oauth-types.js';
 import { extractNetworkErrorCode, extractNetworkErrorMessage } from './error-utils.js';
 
@@ -62,7 +62,11 @@ export function createWordPressTransport(
 ): WordPressTransport {
   const inflight = new Map<string | number, () => void>();
   const toolHeaders = new Map<string, HeaderParam[]>();
-  const fetch: FetchLike = async (url, init) => {
+  const send = async (
+    url: string | URL,
+    init: RequestInit | undefined,
+    retried: boolean
+  ): Promise<Response> => {
     const message: JSONRPCMessage | undefined =
       typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
     const request = message && 'method' in message && 'id' in message ? message : undefined;
@@ -146,6 +150,22 @@ export function createWordPressTransport(
         headers,
         signal: controller.signal,
       });
+      // Retry once with a new sign-in when WordPress rejects the stored token.
+      // Decide before wrapping the body, so discarding it cannot report a failure.
+      if (
+        response.status === 401 &&
+        !retried &&
+        (await discardRejectedOAuthToken(headers.get('Authorization')))
+      ) {
+        // node-fetch (used with SOCKS/PAC) exposes a Node stream instead of a Web stream.
+        const unread = response.body as any;
+        if (typeof unread?.cancel === 'function') await unread.cancel();
+        else unread?.destroy?.();
+        cleanup();
+        // The client may have cancelled the request while the token was discarded.
+        if (cancelled) return new Response(null, { status: 202 });
+        return send(url, init, true);
+      }
       // node-fetch (used with SOCKS/PAC) exposes a Node stream; the SDK requires Web streams.
       const body =
         response.body && typeof (response.body as any).getReader !== 'function'
@@ -209,6 +229,7 @@ export function createWordPressTransport(
       throw failure(error);
     }
   };
+  const fetch: FetchLike = (url, init) => send(url, init, false);
   return Object.assign(new StreamableHTTPClientTransport(new URL(getRequestUrl()), { fetch }), {
     cancelRequest(id: string | number) {
       inflight.get(id)?.();

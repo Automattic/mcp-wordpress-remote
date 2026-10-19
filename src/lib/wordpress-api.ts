@@ -14,7 +14,12 @@ import {
   extractNetworkErrorMessage,
   getConnectionErrorHint,
 } from './error-utils.js';
-import { getValidTokens, generateServerUrlHash } from './persistent-auth-config.js';
+import {
+  deleteTokens,
+  getValidTokens,
+  generateServerUrlHash,
+  readTokens,
+} from './persistent-auth-config.js';
 import { MCPOAuthProvider } from './mcp-oauth-provider.js';
 import { createLazyWPAuthCoordinator } from './coordination.js';
 
@@ -207,6 +212,28 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
     logger.error('Error getting OAuth tokens', 'AUTH', error);
     return null;
   }
+}
+
+/**
+ * Delete the stored OAuth token after WordPress rejects it with a 401, so the
+ * next request signs in again instead of reusing it until its local expiry.
+ *
+ * @param authorization The Authorization header the rejected request sent.
+ * @return Whether the stored token was deleted.
+ */
+export async function discardRejectedOAuthToken(authorization: string | null): Promise<boolean> {
+  if (!CONFIG.OAUTH_ENABLED || CONFIG.JWT_TOKEN) {
+    return false;
+  }
+  const serverUrlHash = generateServerUrlHash(CONFIG.WP_API_URL);
+  const tokens = await readTokens(serverUrlHash);
+  // Another request may already have replaced the token that was rejected.
+  if (!tokens || authorization !== `Bearer ${tokens.access_token}`) {
+    return false;
+  }
+  logger.warn('WordPress rejected the stored OAuth token; signing in again', 'AUTH');
+  await deleteTokens(serverUrlHash);
+  return true;
 }
 
 /**
