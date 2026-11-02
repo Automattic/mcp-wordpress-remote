@@ -1,4 +1,3 @@
-import { Readable } from 'node:stream';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { JSONRPCMessage, JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
 import { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -195,9 +194,7 @@ export function createWordPressTransport(
           response.status
         );
         if (recovered) {
-          const unread = response.body as any;
-          if (typeof unread?.cancel === 'function') await unread.cancel();
-          else unread?.destroy?.();
+          await response.body?.cancel();
           cleanup();
           if (cancelled) return new Response(null, { status: 202 });
           return send(url, init, true);
@@ -207,12 +204,7 @@ export function createWordPressTransport(
           controller.abort();
         }, timeoutMs);
       }
-      // node-fetch (used with SOCKS/PAC) exposes a Node stream; the SDK requires Web streams.
-      const body =
-        response.body && typeof (response.body as any).getReader !== 'function'
-          ? (Readable.toWeb(response.body as unknown as Readable) as ReadableStream<Uint8Array>)
-          : response.body;
-      const reader = body?.getReader();
+      const reader = response.body?.getReader();
       // The SDK releases bodies it does not read (202, 405). The pull pending since
       // construction then resumes on a closed controller and must stay quiet.
       let released = false;
