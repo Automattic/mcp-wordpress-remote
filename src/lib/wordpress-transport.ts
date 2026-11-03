@@ -1,4 +1,4 @@
-import { Readable } from 'node:stream';
+import type { Readable } from 'node:stream';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { JSONRPCMessage, JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
 import { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -8,6 +8,7 @@ import { recoverOAuthAuthorization, getRequestUrl, getWordPressHeaders } from '.
 import { parseWWWAuthenticateHeader } from './mcp-oauth-utils.js';
 import { APIError } from './oauth-types.js';
 import { extractNetworkErrorCode, extractNetworkErrorMessage } from './error-utils.js';
+import { nodeReadableToWeb } from './node-web-stream.js';
 
 /** Request `_meta` key that carries the protocol version on 2026 stateless requests. */
 export const PROTOCOL_VERSION_META = 'io.modelcontextprotocol/protocolVersion';
@@ -210,7 +211,7 @@ export function createWordPressTransport(
       // node-fetch (used with SOCKS/PAC) exposes a Node stream; the SDK requires Web streams.
       const body =
         response.body && typeof (response.body as any).getReader !== 'function'
-          ? (Readable.toWeb(response.body as unknown as Readable) as ReadableStream<Uint8Array>)
+          ? nodeReadableToWeb(response.body as unknown as Readable)
           : response.body;
       const reader = body?.getReader();
       // The SDK releases bodies it does not read (202, 405). The pull pending since
