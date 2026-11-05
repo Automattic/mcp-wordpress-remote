@@ -7,9 +7,11 @@
 
 import type { RequestInit as NodeFetchRequestInit } from 'node-fetch';
 import type { Agent } from 'http';
+import type { Readable } from 'node:stream';
 import { logger } from './utils.js';
 import { MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
 import { initializeProxy, getAgentForUrl, isProxyConfigured, getProxyType } from './proxy-utils.js';
+import { nodeReadableToWeb } from './node-web-stream.js';
 
 const PROXY_PRODUCT = `mcp-wordpress-remote/${MCP_WORDPRESS_REMOTE_VERSION}`;
 let clientProduct: string | undefined;
@@ -98,7 +100,19 @@ export async function proxyFetch(url: string, init?: RequestInit): Promise<Respo
   if (agent) {
     // Use node-fetch with agent for SOCKS/HTTP proxy support
     const nodeFetch = (await import('node-fetch')).default;
-    return nodeFetch(url, { ...init, agent } as ProxyRequestInit) as unknown as Response;
+    const response = await nodeFetch(url, { ...init, agent } as ProxyRequestInit);
+    // The MCP SDK checks `instanceof Response` (e.g. to read an OAuth error body),
+    // which node-fetch's Response fails, so rebuild it as a native one. The native
+    // constructor rejects a body on null-body statuses, where node-fetch still sets one.
+    const body =
+      response.body && ![204, 205, 304].includes(response.status)
+        ? nodeReadableToWeb(response.body as unknown as Readable)
+        : null;
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: [...response.headers],
+    });
   }
 
   // Direct connection (no proxy configured or PAC returned DIRECT)

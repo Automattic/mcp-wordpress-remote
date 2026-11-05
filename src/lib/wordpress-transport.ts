@@ -1,4 +1,3 @@
-import type { Readable } from 'node:stream';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { JSONRPCMessage, JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
 import { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -8,7 +7,6 @@ import { recoverOAuthAuthorization, getRequestUrl, getWordPressHeaders } from '.
 import { parseWWWAuthenticateHeader } from './mcp-oauth-utils.js';
 import { APIError } from './oauth-types.js';
 import { extractNetworkErrorCode, extractNetworkErrorMessage } from './error-utils.js';
-import { nodeReadableToWeb } from './node-web-stream.js';
 
 /** Request `_meta` key that carries the protocol version on 2026 stateless requests. */
 export const PROTOCOL_VERSION_META = 'io.modelcontextprotocol/protocolVersion';
@@ -196,9 +194,7 @@ export function createWordPressTransport(
           response.status
         );
         if (recovered) {
-          const unread = response.body as any;
-          if (typeof unread?.cancel === 'function') await unread.cancel();
-          else unread?.destroy?.();
+          await response.body?.cancel();
           cleanup();
           if (cancelled) return new Response(null, { status: 202 });
           return send(url, init, true);
@@ -208,12 +204,7 @@ export function createWordPressTransport(
           controller.abort();
         }, timeoutMs);
       }
-      // node-fetch (used with SOCKS/PAC) exposes a Node stream; the SDK requires Web streams.
-      const body =
-        response.body && typeof (response.body as any).getReader !== 'function'
-          ? nodeReadableToWeb(response.body as unknown as Readable)
-          : response.body;
-      const reader = body?.getReader();
+      const reader = response.body?.getReader();
       // The SDK releases bodies it does not read (202, 405). The pull pending since
       // construction then resumes on a closed controller and must stay quiet.
       let released = false;
