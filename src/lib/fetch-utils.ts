@@ -7,10 +7,11 @@
 
 import type { RequestInit as NodeFetchRequestInit } from 'node-fetch';
 import type { Agent } from 'http';
-import { Readable } from 'node:stream';
+import type { Readable } from 'node:stream';
 import { logger } from './utils.js';
 import { MCP_WORDPRESS_REMOTE_VERSION } from './config.js';
 import { initializeProxy, getAgentForUrl, isProxyConfigured, getProxyType } from './proxy-utils.js';
+import { nodeReadableToWeb } from './node-web-stream.js';
 
 const PROXY_PRODUCT = `mcp-wordpress-remote/${MCP_WORDPRESS_REMOTE_VERSION}`;
 let clientProduct: string | undefined;
@@ -105,7 +106,7 @@ export async function proxyFetch(url: string, init?: RequestInit): Promise<Respo
     // constructor rejects a body on null-body statuses, where node-fetch still sets one.
     const body =
       response.body && ![204, 205, 304].includes(response.status)
-        ? (Readable.toWeb(response.body as unknown as Readable) as ReadableStream<Uint8Array>)
+        ? nodeReadableToWeb(response.body as unknown as Readable)
         : null;
     return new Response(body, {
       status: response.status,

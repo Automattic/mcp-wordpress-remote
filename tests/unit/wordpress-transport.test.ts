@@ -1,4 +1,6 @@
 import { jest } from '@jest/globals';
+import { PassThrough } from 'node:stream';
+import { nodeReadableToWeb } from '../../src/lib/node-web-stream.js';
 
 describe('WordPress transport authentication deadline', () => {
   it('starts the request deadline after authentication, so a slow login does not time out', async () => {
@@ -342,6 +344,39 @@ describe('WordPress transport released response bodies', () => {
       await new Promise(resolve => setTimeout(resolve, 50));
       expect(failures).toEqual([]);
     } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('survives a proxied 202 whose buffered Node stream body the SDK releases unread', async () => {
+    // proxyFetch adapts node-fetch's Node body before returning a native Response.
+    // Some servers send a short body with 202 Accepted, so there is data buffered when the
+    // SDK cancels it.
+    const proxied202 = () => {
+      const body = new PassThrough();
+      body.write('{"jsonrpc":"2.0"}');
+      return new Response(nodeReadableToWeb(body), {
+        status: 202,
+        statusText: 'Accepted',
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+      });
+    };
+    const uncaught: Error[] = [];
+    const onUncaught = (error: Error) => uncaught.push(error);
+    const listeners = process.listeners('uncaughtException');
+    process.removeAllListeners('uncaughtException');
+    process.on('uncaughtException', onUncaught);
+    const { network, failures, transport } = await setup([proxied202]);
+    try {
+      await transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(network).toHaveBeenCalledTimes(2);
+      expect(failures).toEqual([]);
+      expect(uncaught).toEqual([]);
+    } finally {
+      await transport.close();
+      process.removeListener('uncaughtException', onUncaught);
+      for (const listener of listeners) process.on('uncaughtException', listener);
       jest.restoreAllMocks();
     }
   });

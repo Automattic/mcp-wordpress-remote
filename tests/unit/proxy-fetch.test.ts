@@ -8,7 +8,7 @@
  */
 
 import { jest } from '@jest/globals';
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { parseErrorResponse } from '@modelcontextprotocol/sdk/client/auth.js';
 import { mockEnv } from '../utils/test-helpers.js';
@@ -87,5 +87,30 @@ describe('proxyFetch', () => {
 
     expect(mockNodeFetch).not.toHaveBeenCalled();
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a proxied response safely while Node data is buffered', async () => {
+    restoreEnv = mockEnv({ ...NO_PROXY_ENV, SOCKS_PROXY: 'socks5h://127.0.0.1:8080' });
+    const body = new PassThrough();
+    mockNodeFetch.mockImplementationOnce(async () => ({
+      ok: true,
+      status: 202,
+      statusText: '',
+      headers: new Headers(),
+      body,
+    }));
+
+    const { setupFetchPolyfill, proxyFetch } = await import('../../src/lib/fetch-utils.js');
+    await setupFetchPolyfill();
+    const response = await proxyFetch('https://public-api.wordpress.com/wpcom/v2/mcp/v2');
+    const reader = response.body!.getReader();
+    body.pause();
+    body.write('{"jsonrpc":"2.0"}');
+    body.resume();
+    await reader.cancel('released by SDK');
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(body.destroyed).toBe(true);
+    await expect(reader.read()).resolves.toMatchObject({ done: true });
   });
 });
