@@ -68,36 +68,17 @@ describe('nodeReadableToWeb', () => {
     await nodeReadableToWeb(body).cancel();
     expect(destroy).toHaveBeenCalled();
   });
-});
 
-describe('WordPress transport with a Node stream body (SOCKS/PAC)', () => {
-  it('survives a 202 whose buffered body the SDK releases unread', async () => {
-    jest.resetModules();
-    const api = await import('../../src/lib/wordpress-api.js');
-    const fetch = await import('../../src/lib/fetch-utils.js');
-    jest
-      .spyOn(api, 'getWordPressHeaders')
-      .mockResolvedValue({ Authorization: 'Bearer fixture-token' });
-    jest.spyOn(fetch, 'proxyFetch').mockImplementation(async () => {
-      const body = new PassThrough();
-      body.write('{"jsonrpc":"2.0"}'); // some servers send a short body with 202 Accepted
-      return {
-        ok: true,
-        status: 202,
-        statusText: 'Accepted',
-        headers: new Headers({ 'Content-Type': 'application/json' }),
-        body,
-      } as any;
-    });
-    const { createWordPressTransport } = await import('../../src/lib/wordpress-transport.js');
-    const transport = createWordPressTransport(() => {});
-    transport.onerror = () => {};
-    const uncaught = await captureUncaught(async () => {
-      await transport.start();
-      await transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' } as any);
-      await new Promise(resolve => setTimeout(resolve, 50));
-    });
-    await transport.close();
-    expect(uncaught).toEqual([]);
+  it('settles cancel() while a read is still waiting for bytes', async () => {
+    const body = new PassThrough();
+    const reader = nodeReadableToWeb(body).getReader();
+    const pending = reader.read();
+    await new Promise(resolve => setImmediate(resolve)); // let pull() start awaiting next()
+    const outcome = await Promise.race([
+      reader.cancel().then(() => 'settled'),
+      new Promise(resolve => setTimeout(() => resolve('hung'), 200)),
+    ]);
+    expect(outcome).toBe('settled');
+    await expect(pending).resolves.toMatchObject({ done: true });
   });
 });
