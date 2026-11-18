@@ -47,6 +47,8 @@ export function serveApprovals() {
     if (!ticket || url.pathname !== root + '/connect/' + ticket.id)
       return reply(404, 'Unknown link.');
     if (req.method === 'GET') {
+      // A no-referrer document makes browsers send Origin: null on form POST.
+      res.setHeader('Referrer-Policy', 'strict-origin');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return reply(
         200,

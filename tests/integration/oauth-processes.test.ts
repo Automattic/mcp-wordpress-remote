@@ -361,6 +361,8 @@ describe('OAuth across proxy processes', () => {
       if (!ready) await new Promise(r => setTimeout(r, 50));
     }
     expect(ready).toBe(true);
+    expect((await fetch(link)).headers.get('referrer-policy')).toBe('strict-origin');
+    expect((await fetch(link, { method: 'POST', headers: { Origin: 'null' } })).status).toBe(403);
     expect(browsers).toBe(0);
     expect(grants).toBe(0);
     expect((await fetch(link, { method: 'POST' })).status).toBe(403);
