@@ -128,7 +128,27 @@ describe('OAuth across proxy processes', () => {
           response.end(JSON.stringify({ error: 'insufficient_scope' }));
           return;
         }
+        if (request.method === 'GET') {
+          response.writeHead(405);
+          response.end();
+          return;
+        }
         const rpc = JSON.parse(body);
+        if (!('id' in rpc)) {
+          response.writeHead(202);
+          response.end();
+          return;
+        }
+        if (rpc.method === 'tools/list') {
+          response.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: rpc.id,
+              result: { tools: [{ name: 'fixture-tool', inputSchema: { type: 'object' } }] },
+            })
+          );
+          return;
+        }
         response.setHeader('Mcp-Session-Id', 'fixture-session');
         response.end(
           JSON.stringify({
@@ -267,6 +287,103 @@ describe('OAuth across proxy processes', () => {
       );
     });
   }
+
+  it('defers approval across client exit and completes through the browser-facing callback', async () => {
+    const listener = createServer();
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const port = (listener.address() as { port: number }).port;
+    await new Promise<void>(resolve => listener.close(() => resolve()));
+    const base = 'http://127.0.0.1:' + port;
+    const options = {
+      OAUTH_APPROVAL_MODE: 'deferred',
+      OAUTH_APPROVAL_BASE_URL: base,
+      OAUTH_APPROVAL_PORT: String(port),
+    };
+    await expect(connect(options)).rejects.toThrow('degraded initialization');
+    const original = children[0];
+    const closed = once(original, 'close');
+    original.kill();
+    await closed;
+
+    await expect(connect(options)).rejects.toThrow('degraded initialization');
+    const survivor = children[children.length - 1];
+    const list = (id: number) =>
+      new Promise<any>((resolve, reject) => {
+        let buffer = '';
+        const timer = setTimeout(() => {
+          survivor.stdout!.off('data', read);
+          reject(new Error('tools/list timed out'));
+        }, 5000);
+        function read(chunk: Buffer) {
+          buffer += chunk.toString();
+          const lines = buffer.split('\n');
+          buffer = lines.pop()!;
+          for (const line of lines) {
+            const message = JSON.parse(line);
+            if (message.id === id) {
+              clearTimeout(timer);
+              survivor.stdout!.off('data', read);
+              resolve(message);
+            }
+          }
+        }
+        survivor.stdout!.on('data', read);
+        survivor.stdin!.write(
+          JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/list', params: {} }) + '\n'
+        );
+      });
+    expect((await list(2)).result.tools[0].name).toBe('oauth_approval');
+    const helper = spawn(process.execPath, [bundle, '--serve-approvals'], {
+      env: {
+        ...process.env,
+        ...options,
+        NODE_PATH: resolve('node_modules'),
+        WP_API_URL: origin + '/mcp',
+        WP_MCP_CONFIG_DIR: cache,
+        WP_OAUTH_CLIENT_ID: 'fixture-client',
+        OAUTH_ENABLED: 'true',
+        USE_SYSTEM_PROXY: 'false',
+        SOCKS_PROXY: '',
+        HTTP_PROXY: '',
+        HTTPS_PROXY: '',
+        ALL_PROXY: '',
+      },
+    });
+    children.push(helper);
+    const ticket = JSON.parse(readFileSync(credentialFile('approval.json'), 'utf8'));
+    const link = base + '/connect/' + ticket.id;
+    let ready = false;
+    for (let i = 0; i < 50 && !ready; i++) {
+      ready = await fetch(link)
+        .then(r => r.ok)
+        .catch(() => false);
+      if (!ready) await new Promise(r => setTimeout(r, 50));
+    }
+    expect(ready).toBe(true);
+    expect(browsers).toBe(0);
+    expect(grants).toBe(0);
+    expect((await fetch(link, { method: 'POST' })).status).toBe(403);
+    const start = await fetch(link, {
+      method: 'POST',
+      headers: { Origin: base },
+      redirect: 'manual',
+    });
+    expect(start.status).toBe(303);
+    const consent = new URL(start.headers.get('location')!);
+    expect(consent.searchParams.get('redirect_uri')).toBe(base + '/callback');
+    const callback = new URL(base + '/callback');
+    callback.searchParams.set('code', 'fixture-code');
+    callback.searchParams.set('state', consent.searchParams.get('state')!);
+    callback.searchParams.set('iss', origin);
+    expect((await fetch(callback)).status).toBe(400);
+    const cookie = start.headers.get('set-cookie')!.split(';')[0];
+    expect((await fetch(callback, { headers: { Cookie: cookie } })).status).toBe(200);
+    expect(grants).toBe(1);
+    expect((await list(3)).result.tools[0].name).toBe('fixture-tool');
+    await connect(options);
+    expect(browsers).toBe(0);
+  });
 
   it('keeps expired refreshable credentials at startup and renews once for three processes', async () => {
     expired();

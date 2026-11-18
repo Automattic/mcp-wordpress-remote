@@ -182,18 +182,22 @@ export function createWordPressTransport(
             !scopeAttempts.has(scopeKey) &&
             (scopeCounts.get(operationKey) ?? 0) < 2));
       if (canRecover) {
-        if (response.status === 403) {
-          scopeAttempts.add(scopeKey);
-          scopeCounts.set(operationKey, (scopeCounts.get(operationKey) ?? 0) + 1);
-        }
         // Keep cancellation registered while consent is pending, but pause the HTTP deadline.
         clearTimeout(timer);
         const recovered = await recoverOAuthAuthorization(
           headers.get('Authorization'),
           challenge,
           response.status
-        );
+        ).catch(async error => {
+          await response.body?.cancel();
+          throw error;
+        });
         if (recovered) {
+          if (response.status === 403) {
+            scopeAttempts.add(scopeKey);
+            scopeCounts.set(operationKey, (scopeCounts.get(operationKey) ?? 0) + 1);
+          }
+
           await response.body?.cancel();
           cleanup();
           if (cancelled) return new Response(null, { status: 202 });

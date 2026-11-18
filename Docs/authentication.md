@@ -43,3 +43,27 @@ Client ID Metadata Documents are recommended by MCP but require maintained hoste
 Regression coverage lives in oauth-discovery.test.ts, oauth-client-contract.test.ts, oauth-renewal.test.ts, wordpress-transport.test.ts, and oauth-processes.test.ts. Process tests use a fake authorization server and browser callback. Setting OAUTH_PROCESS_PROXY_PATH to an installed proxy bundle runs those scenarios against a packed artifact; OAUTH_PROCESS_BROWSER_MODULE supplies the test-only browser adapter during that check. Neither option changes production behavior.
 
 Before publishing, run the repository's clean package gate and test healthy/broken upstream paths plus shared login, expiry refresh, rejected tokens, invalid_grant, transient errors, scope upgrades, denial and stale locks against the installed tarball. A live account's refresh in Codex must be checked after a release is published; synthetic fixtures are not evidence of that live outcome.
+
+### Deferred approval for remote clients
+
+Set `OAUTH_APPROVAL_MODE=deferred` and `OAUTH_APPROVAL_BASE_URL` to the
+browser-facing HTTPS base URL for one MCP resource. The default mode is
+`browser`. Start the same executable with `--serve-approvals` as a persistent
+process under the same OS user, with the same MCP endpoint, OAuth settings
+and credential directory. Set `OAUTH_APPROVAL_PORT` on the service to a free
+local port. It listens on IPv4 loopback. Forward the base path and its
+children without stripping the prefix. For example, Tailscale Serve can forward
+a dedicated HTTPS port to that listener. Restrict access to the intended user.
+Use a separate base URL and listener for each resource.
+
+Register the exact external `<base>/callback` URI with the OAuth provider
+when using a preconfigured client ID. Dynamic registration requests this URI
+automatically. The provider must support this callback for a public PKCE client.
+
+An expired login returns a private, shareable-with-the-user connection link.
+Opening the page is safe to preview. Pressing Continue starts authorization
+and its timeout. The browser can run on any device that can reach both the
+approval service and the provider. The service persists credentials locally
+after verifying the callback. The original MCP process can exit while the
+link is waiting. Clients that cache the signed-out tool list can call
+`oauth_approval` to check again or reconnect to refresh discovery.
