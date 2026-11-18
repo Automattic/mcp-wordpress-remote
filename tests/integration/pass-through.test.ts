@@ -216,6 +216,60 @@ describe('built proxy pass-through', () => {
     expect(received[1].headers['user-agent']).toMatch(userAgent('fixture-client/1'));
   });
 
+  it.each([307, 308])('rejects a cross-origin %i without forwarding request data', async status => {
+    const forwarded: Array<{ body: string; headers: IncomingMessage['headers'] }> = [];
+    const destination = createServer(async (req, res) => {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      forwarded.push({ body, headers: req.headers });
+      const message = JSON.parse(body);
+      json(res, { jsonrpc: '2.0', id: message.id, result: { tools: [] } });
+    });
+    destination.listen(0, '127.0.0.1');
+    await once(destination, 'listening');
+    try {
+      await client.request(0, 'initialize', initialize());
+      const port = (destination.address() as { port: number }).port;
+      respond = (_req, res) => {
+        res.writeHead(status, { Location: `http://127.0.0.1:${port}/capture` }).end();
+      };
+
+      const response = await client.request(1, 'tools/list', {});
+      expect(response.error).toBeDefined();
+      expect(response.result).toBeUndefined();
+      expect(forwarded).toEqual([]);
+    } finally {
+      await client.stop();
+      destination.closeAllConnections();
+      await new Promise<void>(resolve => destination.close(() => resolve()));
+    }
+  });
+
+  it.each([307, 308])('preserves a same-origin %i and its request data', async status => {
+    await client.request(0, 'initialize', initialize());
+    const paths: string[] = [];
+    respond = (req, res, message) => {
+      paths.push(req.url!);
+      if (req.url === '/mcp') {
+        res.writeHead(status, { Location: '/final' }).end();
+      } else {
+        json(res, { jsonrpc: '2.0', id: message.id, result: { tools: [] } });
+      }
+    };
+
+    expect(await client.request(1, 'tools/list', {})).toEqual({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { tools: [] },
+    });
+    expect(paths).toEqual(['/mcp', '/final']);
+    expect(received.slice(1).map(entry => entry.message)).toEqual([
+      { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+      { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+    ]);
+    expect(received.slice(1).every(entry => entry.headers['x-custom'] === 'preserve')).toBe(true);
+  });
+
   it('turns clientInfo into a valid User-Agent product', async () => {
     await client.request(0, 'initialize', {
       ...initialize(),
