@@ -236,6 +236,7 @@ describe('built proxy pass-through', () => {
 
       const response = await client.request(1, 'tools/list', {});
       expect(response.error).toBeDefined();
+      expect(response.error.message).toMatch(/redirect.*not followed/i);
       expect(response.result).toBeUndefined();
       expect(forwarded).toEqual([]);
     } finally {
