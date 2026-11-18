@@ -239,7 +239,10 @@ export function createWordPressTransport(
         statusText: response.statusText,
         headers: response.headers,
       });
-      if (!response.ok && init?.method === 'POST') {
+      // The SDK must inspect manual redirects before enforcing its origin policy.
+      const sdkRedirect =
+        init?.redirect === 'manual' && [301, 302, 303, 307, 308].includes(response.status);
+      if (!response.ok && init?.method === 'POST' && !sdkRedirect) {
         const text = await wrapped.text();
         let rpc: JSONRPCMessage | undefined;
         try {
