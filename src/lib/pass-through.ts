@@ -28,6 +28,9 @@ const asRequest = (message: JSONRPCMessage | undefined): JSONRPCRequest | undefi
 const isStateless = (message: JSONRPCMessage): boolean =>
   'method' in message && typeof message.params?._meta?.[PROTOCOL_VERSION_META] === 'string';
 
+const isToolRequest = (request: JSONRPCRequest): boolean =>
+  request.method === 'tools/list' || request.method === 'tools/call';
+
 /**
  * Forward messages; only observe initialization and correlate optional hook requests.
  * Request deadlines are owned by the WordPress transport, which reports them via `fail`.
@@ -129,7 +132,7 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
       entry.reject(error);
       return;
     }
-    if (error instanceof ApprovalRequired && ['tools/list', 'tools/call'].includes(message.method))
+    if (error instanceof ApprovalRequired && isToolRequest(message))
       return outputApproval(message, error);
     const parts =
       error instanceof APIError ? apiErrorToMcpError(error) : new McpError(-32603, error.message);
@@ -163,7 +166,7 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
         initError instanceof ApprovalRequired &&
         initialization &&
         request &&
-        (request.method === 'tools/list' || request.method === 'tools/call')
+        isToolRequest(request)
       ) {
         const hello = initialization;
         reconnect ??= new Promise<WordPressResponse>((resolve, reject) => {
@@ -179,12 +182,19 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
           .finally(() => {
             reconnect = undefined;
           });
+      }
+      // Requests that awaited the earlier initialize also wait for its replacement.
+      if (reconnect) {
         await reconnect;
-        if (initError instanceof ApprovalRequired) {
+        if (request && isToolRequest(request) && initError instanceof ApprovalRequired) {
           outputApproval(request, initError);
           return;
         }
-        if (!initError && request.params?.name === approvalTool) {
+        if (
+          !initError &&
+          request?.method === 'tools/call' &&
+          request.params?.name === approvalTool
+        ) {
           output({
             jsonrpc: '2.0',
             id: request.id,
