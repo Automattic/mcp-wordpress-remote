@@ -6,6 +6,7 @@ import { proxyFetch } from './fetch-utils.js';
 import { recoverOAuthAuthorization, getRequestUrl, getWordPressHeaders } from './wordpress-api.js';
 import { parseWWWAuthenticateHeader } from './mcp-oauth-utils.js';
 import { APIError } from './oauth-types.js';
+import { ApprovalRequired } from './deferred-approval.js';
 import { extractNetworkErrorCode, extractNetworkErrorMessage } from './error-utils.js';
 
 /** Request `_meta` key that carries the protocol version on 2026 stateless requests. */
@@ -182,6 +183,10 @@ export function createWordPressTransport(
             !scopeAttempts.has(scopeKey) &&
             (scopeCounts.get(operationKey) ?? 0) < 2));
       if (canRecover) {
+        if (response.status === 403) {
+          scopeAttempts.add(scopeKey);
+          scopeCounts.set(operationKey, (scopeCounts.get(operationKey) ?? 0) + 1);
+        }
         // Keep cancellation registered while consent is pending, but pause the HTTP deadline.
         clearTimeout(timer);
         const recovered = await recoverOAuthAuthorization(
@@ -189,15 +194,15 @@ export function createWordPressTransport(
           challenge,
           response.status
         ).catch(async error => {
+          // Nobody has been asked yet, so a deferred approval does not spend the attempt.
+          if (response.status === 403 && error instanceof ApprovalRequired) {
+            scopeAttempts.delete(scopeKey);
+            scopeCounts.set(operationKey, (scopeCounts.get(operationKey) ?? 1) - 1);
+          }
           await response.body?.cancel();
           throw error;
         });
         if (recovered) {
-          if (response.status === 403) {
-            scopeAttempts.add(scopeKey);
-            scopeCounts.set(operationKey, (scopeCounts.get(operationKey) ?? 0) + 1);
-          }
-
           await response.body?.cancel();
           cleanup();
           if (cancelled) return new Response(null, { status: 202 });
