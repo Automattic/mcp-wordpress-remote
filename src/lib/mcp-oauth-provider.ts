@@ -4,6 +4,14 @@
  */
 
 import open from 'open';
+import {
+  approvalBase,
+  deferApproval,
+  ApprovalRequired,
+  type Ticket,
+  type ApprovalRedirect,
+} from './deferred-approval.js';
+import { readJsonFile } from './persistent-auth-config.js';
 import lockfile from 'proper-lockfile';
 import { setTimeout as delay } from 'node:timers/promises';
 import { refreshAuthorization } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -74,7 +82,10 @@ export class MCPOAuthProvider {
   private authServerMetadata: AuthorizationServerMetadata | null = null;
   private resourceMetadata: ProtectedResourceMetadata | null = null;
 
-  constructor(options: Partial<MCPOAuthConfig>) {
+  constructor(
+    options: Partial<MCPOAuthConfig>,
+    private approval?: ApprovalRedirect
+  ) {
     const serverUrl = options.serverUrl || CONFIG.WP_API_URL;
     const defaultScopes = CONFIG.OAUTH_SCOPES ? getDefaultOAuthScopes() : [];
     this.explicitScopes = options.scopes ?? defaultScopes;
@@ -191,6 +202,7 @@ export class MCPOAuthProvider {
     }
     if (
       stored?.issuer === issuer &&
+      (!this.approval || stored.redirect_uris?.includes(this.approval.uri)) &&
       typeof stored.client_id === 'string' &&
       stored.client_id.length > 0
     ) {
@@ -261,13 +273,20 @@ export class MCPOAuthProvider {
       release = await lockfile.lock(file, { realpath: false });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ELOCKED') throw error;
+      const existingApproval = async () => {
+        if (this.approval || !approvalBase()) return;
+        const pending = await readJsonFile<Ticket>(this.serverUrlHash, 'approval.json');
+        if (pending) throw new ApprovalRequired(approvalBase() + '/connect/' + pending.id);
+      };
       const deadline = Date.now() + this.config.timeout;
       while (Date.now() < deadline) {
+        await existingApproval();
         const tokens = await this.tokens();
         if (this.satisfies(tokens, request)) return tokens;
         if (!(await lockfile.check(file, { realpath: false }))) {
           const completed = await this.tokens();
           if (this.satisfies(completed, request)) return completed;
+          await existingApproval();
           throw new OAuthError('Authentication in another process did not complete', 'AUTH_FAILED');
         }
         await delay(Math.min(100, Math.max(0, deadline - Date.now())));
@@ -277,9 +296,12 @@ export class MCPOAuthProvider {
     try {
       const completed = await this.tokens();
       if (this.satisfies(completed, request)) return completed;
+      const cached = await readTokens(this.serverUrlHash);
+      if (!this.approval && approvalBase() && !cached?.refresh_token)
+        return await deferApproval(this.serverUrlHash, request);
       await this.discoverOAuthEndpoints(request.challenge);
       const issuer = this.getAuthorizationServerUrl()!;
-      const stored = await readTokens(this.serverUrlHash);
+      const stored = cached;
       const client = await readClientInfo(this.serverUrlHash);
       if (
         this.configuredClientId &&
@@ -334,6 +356,7 @@ export class MCPOAuthProvider {
           await deleteConfigFile(this.serverUrlHash, 'tokens.json');
         }
       }
+      if (!this.approval && approvalBase()) return await deferApproval(this.serverUrlHash, request);
       return await this.performAuthorization();
     } finally {
       await release();
@@ -398,7 +421,8 @@ export class MCPOAuthProvider {
       // Always release the callback port, so a failed attempt does not block the next one.
       try {
         // Update redirect URI with the actual port used
-        const actualRedirectUri = `http://${this.config.host === '::1' ? '[::1]' : this.config.host}:${callbackPort}/oauth/callback`;
+        const localCallback = `http://${this.config.host === '::1' ? '[::1]' : this.config.host}:${callbackPort}/oauth/callback`;
+        const actualRedirectUri = this.approval?.uri ?? localCallback;
         this.config.redirectUri = actualRedirectUri;
 
         // Step 3: Ensure we have a client ID (via registration if needed)
@@ -427,16 +451,18 @@ export class MCPOAuthProvider {
         // Step 6: Open browser for user authorization
         const authorizationCode = this.waitForAuthorizationCode();
         void authorizationCode.catch(() => {});
-        try {
-          await open(authUrl);
-          logger.oauth('Browser opened successfully');
-        } catch (browserError) {
-          logger.error('Failed to open browser automatically', 'OAUTH', browserError);
-          logger.info('\n=== MANUAL ACTION REQUIRED ===');
-          logger.info('Please manually open the following URL in your browser:');
-          logger.info(`${authUrl}`);
-          logger.info('===============================\n');
-        }
+        if (this.approval) this.approval.redirect(authUrl, localCallback);
+        else
+          try {
+            await open(authUrl);
+            logger.oauth('Browser opened successfully');
+          } catch (browserError) {
+            logger.error('Failed to open browser automatically', 'OAUTH', browserError);
+            logger.info('\n=== MANUAL ACTION REQUIRED ===');
+            logger.info('Please manually open the following URL in your browser:');
+            logger.info(`${authUrl}`);
+            logger.info('===============================\n');
+          }
 
         // Step 7: Wait for authorization code
         const authCode = await authorizationCode;

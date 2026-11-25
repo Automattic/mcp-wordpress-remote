@@ -1,6 +1,7 @@
 /**
  * External dependencies
  */
+import { ApprovalRequired } from './deferred-approval.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createParser } from 'eventsource-parser';
@@ -201,6 +202,7 @@ async function getOAuthTokens(): Promise<WPTokens | null> {
       }
     }
   } catch (error) {
+    if (error instanceof ApprovalRequired) throw error;
     logger.error('Error getting OAuth tokens', 'AUTH', error);
     return null;
   }

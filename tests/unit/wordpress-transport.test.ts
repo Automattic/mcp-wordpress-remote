@@ -445,6 +445,39 @@ describe('WordPress transport scope authorization limits', () => {
     }
   });
 
+  it('spends the scope attempt on failed consent but not on a deferred approval', async () => {
+    const c = await setup();
+    const { ApprovalRequired } = await import('../../src/lib/deferred-approval.js');
+    c.network.mockImplementation(
+      async () =>
+        new Response('forbidden', {
+          status: 403,
+          headers: { 'WWW-Authenticate': 'Bearer error="insufficient_scope", scope="write"' },
+        }) as any
+    );
+    const send = () =>
+      c.transport
+        .send({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'fixture', arguments: {} },
+        })
+        .catch(() => {});
+    try {
+      c.recover.mockRejectedValue(new ApprovalRequired('https://approval.example/connect/1'));
+      for (let i = 0; i < 3; i++) await send();
+      expect(c.recover).toHaveBeenCalledTimes(3);
+      c.recover.mockRejectedValue(new Error('denied'));
+      await send();
+      expect(c.recover).toHaveBeenCalledTimes(4);
+      await send();
+      expect(c.recover).toHaveBeenCalledTimes(4);
+    } finally {
+      await c.transport.close();
+    }
+  });
+
   it('pauses the HTTP deadline during consent without losing client cancellation', async () => {
     const c = await setup();
     c.network.mockResolvedValue(

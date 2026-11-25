@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { serveApprovals } from './lib/approval-server.js';
+import { approvalBase } from './lib/deferred-approval.js';
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { logger, setupSignalHandlers } from './lib/utils.js';
@@ -11,6 +13,8 @@ validateNodeVersion(18);
 
 async function WordPressProxy() {
   await setupFetchPolyfill();
+  approvalBase();
+  if (process.argv.includes('--serve-approvals')) return serveApprovals();
 
   const local = new StdioServerTransport();
   let bridge: Awaited<ReturnType<typeof startPassThrough>> | undefined;

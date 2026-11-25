@@ -1,3 +1,4 @@
+import { ApprovalRequired } from './deferred-approval.js';
 import { randomUUID } from 'node:crypto';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { JSONRPCMessage, JSONRPCRequest, McpError } from '@modelcontextprotocol/sdk/types.js';
@@ -27,6 +28,9 @@ const asRequest = (message: JSONRPCMessage | undefined): JSONRPCRequest | undefi
 const isStateless = (message: JSONRPCMessage): boolean =>
   'method' in message && typeof message.params?._meta?.[PROTOCOL_VERSION_META] === 'string';
 
+const isToolRequest = (request: JSONRPCRequest): boolean =>
+  request.method === 'tools/list' || request.method === 'tools/call';
+
 /**
  * Forward messages; only observe initialization and correlate optional hook requests.
  * Request deadlines are owned by the WordPress transport, which reports them via `fail`.
@@ -38,12 +42,38 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
   let settleInit: (() => void) | undefined;
   let initError: Error | undefined;
   let closed = false;
+  let initialization: JSONRPCRequest | undefined;
+  let reconnect: Promise<void> | undefined;
+  const approvalTool = 'oauth_approval';
+  const approvalResult = (id: string | number, error: ApprovalRequired) =>
+    output({
+      jsonrpc: '2.0',
+      id,
+      result: { isError: true, content: [{ type: 'text', text: error.message }] },
+    });
 
   const output = (message: JSONRPCMessage) => {
     void local
       .send(message)
       .catch(error => logger.error('Cannot write client response', 'PROXY', error));
   };
+  function outputApproval(request: JSONRPCRequest, error: ApprovalRequired) {
+    if (request.method === 'tools/list') {
+      output({
+        jsonrpc: '2.0',
+        id: request.id,
+        result: {
+          tools: [
+            {
+              name: approvalTool,
+              description: error.message,
+              inputSchema: { type: 'object', properties: {} },
+            },
+          ],
+        },
+      });
+    } else approvalResult(request.id, error);
+  }
   const outputError = (id: string | number, error: McpError) => {
     output({
       jsonrpc: '2.0',
@@ -85,9 +115,13 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
               version: MCP_WORDPRESS_REMOTE_VERSION,
             },
             capabilities: {
+              ...(error instanceof ApprovalRequired ? { tools: { listChanged: true } } : {}),
               experimental: { connectionFailed: info.code ? { code: info.code } : {} },
             },
-            instructions: `MCP WordPress Remote Proxy Server (Connection Failed${info.code ? `: ${info.code}` : ''})`,
+            instructions:
+              error instanceof ApprovalRequired
+                ? error.message
+                : `MCP WordPress Remote Proxy Server (Connection Failed${info.code ? `: ${info.code}` : ''})`,
           },
         });
         settleInit?.();
@@ -98,6 +132,8 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
       entry.reject(error);
       return;
     }
+    if (error instanceof ApprovalRequired && isToolRequest(message))
+      return outputApproval(message, error);
     const parts =
       error instanceof APIError ? apiErrorToMcpError(error) : new McpError(-32603, error.message);
     outputError(message.id, new McpError(parts.code, error.message, parts.data));
@@ -117,6 +153,7 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
       }
     }
     if (request?.method === 'initialize') {
+      if (!callbacks) initialization = request;
       initializeId = request.id;
       initError = undefined;
       init = new Promise<void>(resolve => {
@@ -125,6 +162,47 @@ export async function startPassThrough(local: Transport, remote: WordPressTransp
     } else if ('method' in message && !isStateless(message)) {
       // 2026 stateless requests never wait on a legacy initialize.
       await init;
+      if (
+        initError instanceof ApprovalRequired &&
+        initialization &&
+        request &&
+        isToolRequest(request)
+      ) {
+        const hello = initialization;
+        reconnect ??= new Promise<WordPressResponse>((resolve, reject) => {
+          void send({ ...hello, id: randomUUID() }, { resolve, reject }).catch(reject);
+        })
+          .then(async () => {
+            await remote.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+            output({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+          })
+          .catch(error => {
+            initError = error;
+          })
+          .finally(() => {
+            reconnect = undefined;
+          });
+      }
+      // Requests that awaited the earlier initialize also wait for its replacement.
+      if (reconnect) {
+        await reconnect;
+        if (request && isToolRequest(request) && initError instanceof ApprovalRequired) {
+          outputApproval(request, initError);
+          return;
+        }
+        if (
+          !initError &&
+          request?.method === 'tools/call' &&
+          request.params?.name === approvalTool
+        ) {
+          output({
+            jsonrpc: '2.0',
+            id: request.id,
+            result: { content: [{ type: 'text', text: 'Connected. List tools to continue.' }] },
+          });
+          return;
+        }
+      }
       if (initError) {
         if (request) {
           const info = describeConnectionError(initError);

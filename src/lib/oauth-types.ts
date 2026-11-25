@@ -162,7 +162,7 @@ export class APIError extends Error {
     this.code = code;
 
     // Ensure proper prototype chain
-    Object.setPrototypeOf(this, APIError.prototype);
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
